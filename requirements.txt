@@ -1,7 +1,27 @@
-streamlit
+# --- Core Data Science & ML ---
 pandas
 numpy
-matplotlib
-seaborn
 scikit-learn
 joblib
+
+# --- Explainability & Visualization ---
+shap
+matplotlib
+seaborn
+
+# --- Web Application Framework ---
+streamlit
+
+# --- AI Strategy Consultant (LLMs) ---
+google-generativeai
+openai
+
+
+# --- Additional Utilities ---
+requests
+python-dateutil
+beautifulsoup4
+pillow
+streamlit-option-menu
+streamlit-social-media-links
+streamlit-extras
