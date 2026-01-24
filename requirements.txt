@@ -23,5 +23,5 @@ python-dateutil
 beautifulsoup4
 pillow
 streamlit-option-menu
-streamlit-social-media-links
+st-social-media-links
 streamlit-extras
