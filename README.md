@@ -1,25 +1,75 @@
-# 📡 Telco Customer Retention: From Prediction to Profit
+# ChurnAI Pro v1 — Next.js + FastAPI
 
-## 🚀 Business Impact
-This project identifies high-risk customers in a Telco environment and provides a financial framework for retention. By targeting the top 10% of at-risk users, the company can potentially **save over $55,000 in annual revenue** with a 3x return on marketing spend.
+Telco churn prediction platform rebuilt from Streamlit to Next.js for Vercel deployment.
+Maintains full compatibility with existing `src/` Python codebase.
 
-## 📊 Evaluation & Performance
-- **ROC-AUC Score:** 0.89 (High distinguishing power)
-- **Precision:** 76% (Efficient targeting of actual churners)
-- **Recall:** 61% (Identifies more than half of all churners; focused on predictable flight risks)
+## Architecture
 
-## 🔍 Postdictive Analysis: "The Silent Leavers"
-Through postdictive analysis, we found:
-* **The Success:** The model is 90% accurate at catching "New Customers" (Tenure < 6 months) with high monthly bills.
-* **The Challenge:** The model missed "Long-term Churners" (Tenure > 24 months). This suggests these users leave due to **service quality/events** rather than price. 
-* **Recommendation:** Integrate Support Ticket and Network Latency data to catch these hidden risks.
+```
+Frontend (Next.js → Vercel)
+  pages/          → Route pages
+  components/     → Layout, UI components
+  lib/            → API client, analytics
+  styles/         → Global CSS + design tokens
 
-## 💡 Strategic Recommendations
-1. **Contract Migration:** Offer a 15% discount to Month-to-Month Fiber Optic users to switch to 1-year plans.
-2. **Onboarding Concierge:** Focus resources on the "first 90 days" where churn risk is highest.
-3. **Autopay Incentives:** Encourage migration away from Electronic Checks to reduce friction-based churn.
+Backend (FastAPI → Railway/Render)
+  backend/app.py  → Drop-in replacement for Streamlit app.py
+  src/            → Unchanged — processor, model, business_impact
+  models/         → Trained model .pkl files
+  data/           → CSV datasets
+```
 
-## 🛠️ How to Run
-1. `pip install -r requirements.txt`
-2. `python train_pipeline.py`
-3. `streamlit run app.py`
+## Quick Start
+
+### Frontend
+```bash
+cd telco-churn-app   # (root of this project)
+npm install
+cp .env.example .env.local
+npm run dev          # → http://localhost:3000
+```
+
+### Backend
+```bash
+# From your project root (where src/ lives)
+pip install -r backend/requirements.txt
+cp backend/app.py app_fastapi.py   # Keep original app.py (Streamlit)
+uvicorn app_fastapi:app --reload --port 8000
+```
+
+## Deploying to Vercel
+
+1. Push to GitHub
+2. Import repo in Vercel
+3. Set env variable: `NEXT_PUBLIC_API_URL=https://your-api.railway.app`
+4. Deploy ✓
+
+## Deploying Backend to Railway
+
+1. Push the project root (with `backend/app.py` copied to `app.py`)
+2. Set start command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
+3. Copy Railway URL → set as `NEXT_PUBLIC_API_URL` in Vercel
+
+## Pages
+
+| Route         | Description                              |
+|---------------|------------------------------------------|
+| `/`           | Dashboard overview with charts           |
+| `/predict`    | Single + batch prediction (CSV upload)   |
+| `/insights`   | SHAP force plots + LIME explanations     |
+| `/consultant` | AI chat powered by Mistral (free)        |
+| `/roi`        | Business ROI & revenue impact calculator |
+| `/train`      | Retrain model with custom dataset        |
+| `/stats`      | App usage statistics (localStorage)     |
+
+## AI Consultant
+
+Uses **Pollinations.ai** — completely free, no API key required.
+Model: Mistral 7B · Context: Telecom churn analytics expert
+
+## Design System
+
+- **Theme**: Dark navy glassmorphism with cyan accent
+- **Fonts**: Syne (display) + DM Sans (body) + JetBrains Mono (code)  
+- **Colors**: `--cyan: #06B6D4` · `--bg-base: #040812`
+- **Mobile**: Fully responsive with collapsible sidebar
