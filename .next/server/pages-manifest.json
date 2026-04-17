@@ -1,0 +1,11 @@
+{
+  "/_app": "pages/_app.js",
+  "/_error": "pages/_error.js",
+  "/_document": "pages/_document.js",
+  "/stats": "pages/stats.js",
+  "/roi": "pages/roi.js",
+  "/consultant": "pages/consultant.js",
+  "/train": "pages/train.js",
+  "/insights": "pages/insights.js",
+  "/predict": "pages/predict.js"
+}
