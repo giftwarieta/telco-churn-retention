@@ -1,25 +1,38 @@
-import { useState, useCallback } from 'react';
-import Layout from '../components/Layout';
-import { SectionHeader, Card, Button, RiskBadge, ProgressBar, Badge, EmptyState } from '../components/ui';
-import { Brain, Upload, User, ChevronDown, AlertTriangle, CheckCircle, Download, FileText, BarChart2 } from 'lucide-react';
-import { useDropzone } from 'react-dropzone';
+import { useCallback, useState } from 'react';
 import Papa from 'papaparse';
+import { useDropzone } from 'react-dropzone';
 import toast from 'react-hot-toast';
-import { predictSingle, predictBatch } from '../lib/api';
-import { updateStats, addSessionEvent } from '../lib/analytics';
+import { AlertTriangle, BarChart2, Brain, CheckCircle, Download, FileText, Upload, User } from 'lucide-react';
+import Layout from '../components/Layout';
+import { Button, Card, EmptyState, ProgressBar, RiskBadge, SectionHeader } from '../components/ui';
+import { predictBatch, predictSingle } from '../lib/api';
+import { addSessionEvent, updateStats } from '../lib/analytics';
 
 const DEFAULT_FORM = {
-  gender: 'Male', SeniorCitizen: '0', Partner: 'Yes', Dependents: 'No',
-  tenure: '12', PhoneService: 'Yes', MultipleLines: 'No',
-  InternetService: 'Fiber optic', OnlineSecurity: 'No', OnlineBackup: 'Yes',
-  DeviceProtection: 'No', TechSupport: 'No', StreamingTV: 'Yes', StreamingMovies: 'No',
-  Contract: 'Month-to-month', PaperlessBilling: 'Yes', PaymentMethod: 'Electronic check',
-  MonthlyCharges: '70.35', TotalCharges: '844.2',
+  gender: 'Male',
+  SeniorCitizen: '0',
+  Partner: 'Yes',
+  Dependents: 'No',
+  tenure: '12',
+  PhoneService: 'Yes',
+  MultipleLines: 'No',
+  InternetService: 'Fiber optic',
+  OnlineSecurity: 'No',
+  OnlineBackup: 'Yes',
+  DeviceProtection: 'No',
+  TechSupport: 'No',
+  StreamingTV: 'Yes',
+  StreamingMovies: 'No',
+  Contract: 'Month-to-month',
+  PaperlessBilling: 'Yes',
+  PaymentMethod: 'Electronic check',
+  MonthlyCharges: '70.35',
+  TotalCharges: '844.2',
 };
 
 const FIELD_CONFIG = [
   { key: 'gender', label: 'Gender', type: 'select', options: ['Male', 'Female'] },
-  { key: 'SeniorCitizen', label: 'Senior Citizen', type: 'select', options: [['0','No'],['1','Yes']] },
+  { key: 'SeniorCitizen', label: 'Senior Citizen', type: 'select', options: [['0', 'No'], ['1', 'Yes']] },
   { key: 'Partner', label: 'Partner', type: 'select', options: ['Yes', 'No'] },
   { key: 'Dependents', label: 'Dependents', type: 'select', options: ['Yes', 'No'] },
   { key: 'tenure', label: 'Tenure (months)', type: 'number', min: 0, max: 72 },
@@ -39,10 +52,27 @@ const FIELD_CONFIG = [
   { key: 'TotalCharges', label: 'Total Charges ($)', type: 'number', step: '0.01' },
 ];
 
-function getRiskLevel(prob) {
-  if (prob >= 0.7) return 'high';
-  if (prob >= 0.4) return 'medium';
+function getRiskLevel(probability) {
+  if (probability >= 0.7) return 'high';
+  if (probability >= 0.4) return 'medium';
   return 'low';
+}
+
+function sampleSingleResult() {
+  const probability = 0.67;
+  return {
+    churn_probability: probability,
+    churn_prediction: 1,
+    risk_level: 'high',
+    confidence: 0.82,
+    top_factors: [
+      { feature: 'Contract_Month-to-month', impact: 0.34, direction: 'increases' },
+      { feature: 'tenure', impact: -0.21, direction: 'decreases' },
+      { feature: 'MonthlyCharges', impact: 0.18, direction: 'increases' },
+      { feature: 'InternetService_Fiber optic', impact: 0.15, direction: 'increases' },
+    ],
+    preview: true,
+  };
 }
 
 export default function PredictPage() {
@@ -56,6 +86,7 @@ export default function PredictPage() {
 
   const handleSinglePredict = async () => {
     setLoading(true);
+
     try {
       const data = await predictSingle(form);
       setResult(data);
@@ -68,41 +99,41 @@ export default function PredictPage() {
         lowRiskDetected: risk === 'low' ? 1 : 0,
       });
       addSessionEvent({ type: 'prediction', mode: 'single', risk });
-      toast.success('Prediction complete!');
-    } catch (e) {
-      // Use demo result when API is offline
-      const prob = 0.67;
-      const demo = {
-        churn_probability: prob, churn_prediction: 1,
-        risk_level: 'high', confidence: 0.82,
-        top_factors: [
-          { feature: 'Contract_Month-to-month', impact: 0.34, direction: 'increases' },
-          { feature: 'tenure', impact: -0.21, direction: 'decreases' },
-          { feature: 'MonthlyCharges', impact: 0.18, direction: 'increases' },
-          { feature: 'InternetService_Fiber optic', impact: 0.15, direction: 'increases' },
-        ],
-        demo: true,
-      };
-      setResult(demo);
+      toast.success('Prediction complete');
+    } catch {
+      const previewResult = sampleSingleResult();
+      setResult(previewResult);
       updateStats({ totalPredictions: 1, totalRecordsAnalyzed: 1, highRiskDetected: 1 });
-      toast('Using demo mode — connect API for live predictions', { icon: '⚡' });
+      toast('Showing a sample prediction preview.', { icon: '•' });
     } finally {
       setLoading(false);
     }
   };
 
   const onDrop = useCallback((files) => {
-    if (files[0]) setBatchFile(files[0]);
+    if (files[0]) {
+      setBatchFile(files[0]);
+    }
   }, []);
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop, accept: { 'text/csv': ['.csv'] }, multiple: false });
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: { 'text/csv': ['.csv'] },
+    multiple: false,
+  });
 
   const handleBatchPredict = async () => {
-    if (!batchFile) return toast.error('Please upload a CSV file');
+    if (!batchFile) {
+      toast.error('Please upload a CSV file');
+      return;
+    }
+
     setBatchLoading(true);
+
     try {
-      const fd = new FormData();
-      fd.append('file', batchFile);
-      const data = await predictBatch(fd);
+      const formData = new FormData();
+      formData.append('file', batchFile);
+      const data = await predictBatch(formData);
       setBatchResults(data);
       updateStats({
         totalBatchPredictions: 1,
@@ -115,23 +146,31 @@ export default function PredictPage() {
       addSessionEvent({ type: 'prediction', mode: 'batch', records: data.total_records });
       toast.success(`Processed ${data.total_records} records`);
     } catch {
-      // Demo batch result
       Papa.parse(batchFile, {
-        header: true, skipEmptyLines: true,
-        complete: (res) => {
-          const n = res.data.length;
-          const high = Math.floor(n * 0.28), med = Math.floor(n * 0.35), low = n - high - med;
+        header: true,
+        skipEmptyLines: true,
+        complete: (parsed) => {
+          const total = parsed.data.length;
+          const high = Math.floor(total * 0.28);
+          const medium = Math.floor(total * 0.35);
+          const low = total - high - medium;
+
           setBatchResults({
-            total_records: n, high_risk_count: high, medium_risk_count: med, low_risk_count: low,
-            churn_rate: 0.28, avg_probability: 0.41,
-            preview: res.data.slice(0, 5).map((row, i) => ({
-              ...row, churn_probability: Math.random().toFixed(3),
-              risk_level: i < 2 ? 'high' : i < 4 ? 'medium' : 'low',
+            total_records: total,
+            high_risk_count: high,
+            medium_risk_count: medium,
+            low_risk_count: low,
+            churn_rate: 0.28,
+            avg_probability: 0.41,
+            preview: parsed.data.slice(0, 5).map((row, index) => ({
+              ...row,
+              churn_probability: Math.random().toFixed(3),
+              risk_level: index < 2 ? 'high' : index < 4 ? 'medium' : 'low',
             })),
-            demo: true,
+            samplePreview: true,
           });
-          updateStats({ totalBatchPredictions: 1, batchFilesProcessed: 1, totalRecordsAnalyzed: n });
-          toast('Demo batch results — connect API for real predictions', { icon: '⚡' });
+          updateStats({ totalBatchPredictions: 1, batchFilesProcessed: 1, totalRecordsAnalyzed: total });
+          toast('Showing a sample batch preview.', { icon: '•' });
         },
       });
     } finally {
@@ -141,122 +180,143 @@ export default function PredictPage() {
 
   const downloadResults = () => {
     if (!batchResults?.preview) return;
+
     const csv = Papa.unparse(batchResults.preview);
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'churn_predictions.csv'; a.click();
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'churn_predictions.csv';
+    anchor.click();
   };
 
   return (
     <Layout title="Predict">
-      <SectionHeader title="Churn Prediction Engine" subtitle="Single customer or batch CSV analysis" icon={Brain} />
+      <SectionHeader
+        title="Prediction Engine"
+        subtitle="Run a single customer assessment or upload a CSV for batch scoring."
+        icon={Brain}
+      />
 
-      {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-[#0D1526] border border-[#1E2D45] rounded-xl w-fit mb-6">
-        {['single', 'batch'].map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className={`px-5 py-2 rounded-lg text-sm font-medium transition-all duration-200 capitalize
-              ${tab === t ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/25' : 'text-slate-400 hover:text-slate-200'}`}>
-            {t === 'single' ? '👤 Single Customer' : '📂 Batch Upload'}
+      <div className="mb-6 inline-flex w-full max-w-sm gap-1 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg-card)] p-1">
+        {['single', 'batch'].map((mode) => (
+          <button
+            key={mode}
+            onClick={() => setTab(mode)}
+            type="button"
+            className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-medium capitalize transition-all duration-200 ${
+              tab === mode
+                ? 'border border-sky-500/20 bg-sky-500/10 text-sky-500'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            {mode === 'single' ? 'Single Customer' : 'Batch Upload'}
           </button>
         ))}
       </div>
 
       {tab === 'single' ? (
-        <div className="grid lg:grid-cols-5 gap-6">
-          {/* Form */}
-          <Card className="lg:col-span-3 p-6">
-            <div className="flex items-center gap-2 mb-5">
-              <User className="w-4 h-4 text-cyan-400" />
-              <h3 className="font-display font-semibold text-white">Customer Profile</h3>
+        <div className="grid gap-6 lg:grid-cols-5">
+          <Card className="p-5 sm:p-6 lg:col-span-3">
+            <div className="mb-5 flex items-center gap-2">
+              <User className="h-4 w-4 text-sky-500" />
+              <h3 className="font-display text-lg font-semibold text-white">Customer Profile</h3>
             </div>
-            <div className="grid sm:grid-cols-2 gap-4">
-              {FIELD_CONFIG.map(field => (
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              {FIELD_CONFIG.map((field) => (
                 <div key={field.key}>
-                  <label className="block text-xs font-medium text-slate-400 mb-1.5">{field.label}</label>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-400">{field.label}</label>
                   {field.type === 'select' ? (
                     <select
-                      className="input-field w-full px-3 py-2.5 rounded-xl text-sm"
+                      className="input-field rounded-2xl px-3 py-3 text-sm"
                       value={form[field.key]}
-                      onChange={e => setForm(p => ({ ...p, [field.key]: e.target.value }))}
+                      onChange={(event) => setForm((prev) => ({ ...prev, [field.key]: event.target.value }))}
                     >
-                      {field.options.map(opt => {
-                        const [val, label] = Array.isArray(opt) ? opt : [opt, opt];
-                        return <option key={val} value={val}>{label}</option>;
+                      {field.options.map((option) => {
+                        const [value, label] = Array.isArray(option) ? option : [option, option];
+                        return (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        );
                       })}
                     </select>
                   ) : (
                     <input
-                      type="number" step={field.step || '1'} min={field.min} max={field.max}
-                      className="input-field w-full px-3 py-2.5 rounded-xl text-sm"
+                      type="number"
+                      step={field.step || '1'}
+                      min={field.min}
+                      max={field.max}
+                      className="input-field rounded-2xl px-3 py-3 text-sm"
                       value={form[field.key]}
-                      onChange={e => setForm(p => ({ ...p, [field.key]: e.target.value }))}
+                      onChange={(event) => setForm((prev) => ({ ...prev, [field.key]: event.target.value }))}
                     />
                   )}
                 </div>
               ))}
             </div>
-            <div className="mt-5 pt-5 border-t border-[#1E2D45]">
+
+            <div className="mt-6 border-t border-[color:var(--border)] pt-5">
               <Button icon={Brain} onClick={handleSinglePredict} loading={loading} size="lg" className="w-full sm:w-auto">
                 {loading ? 'Analyzing...' : 'Predict Churn Risk'}
               </Button>
             </div>
           </Card>
 
-          {/* Result */}
-          <div className="lg:col-span-2 space-y-4">
+          <div className="space-y-4 lg:col-span-2">
             {result ? (
               <>
-                {result.demo && (
-                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3 text-xs text-amber-400">
-                    ⚡ Demo mode — connect your FastAPI backend for live predictions
+                {result.preview && (
+                  <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-500">
+                    Sample result shown while the live prediction service is unavailable.
                   </div>
                 )}
-                {/* Main result card */}
-                <Card className={`p-6 border-2 ${result.churn_prediction === 1 ? 'border-rose-500/30' : 'border-emerald-500/30'}`}>
+
+                <Card className={`p-6 ${result.churn_prediction === 1 ? 'border-rose-500/25' : 'border-emerald-500/25'}`}>
                   <div className="text-center">
-                    <div className={`inline-flex p-4 rounded-2xl mb-4 ${result.churn_prediction === 1 ? 'bg-rose-500/10' : 'bg-emerald-500/10'}`}>
+                    <div className={`mb-4 inline-flex rounded-[24px] p-4 ${result.churn_prediction === 1 ? 'bg-rose-500/10' : 'bg-emerald-500/10'}`}>
                       {result.churn_prediction === 1
-                        ? <AlertTriangle className="w-8 h-8 text-rose-400" />
-                        : <CheckCircle className="w-8 h-8 text-emerald-400" />}
+                        ? <AlertTriangle className="h-8 w-8 text-rose-500" />
+                        : <CheckCircle className="h-8 w-8 text-emerald-500" />}
                     </div>
-                    <div className="stat-number text-5xl font-bold mb-1" style={{
-                      color: result.churn_prediction === 1 ? '#F43F5E' : '#10B981'
-                    }}>
+
+                    <div className="stat-number mb-1 text-5xl font-bold" style={{ color: result.churn_prediction === 1 ? '#f43f5e' : '#10b981' }}>
                       {(result.churn_probability * 100).toFixed(1)}%
                     </div>
-                    <div className="text-slate-400 text-sm mb-3">Churn Probability</div>
+                    <div className="mb-3 text-sm text-slate-400">Churn probability</div>
                     <RiskBadge level={result.risk_level || getRiskLevel(result.churn_probability)} />
                     {result.confidence && (
-                      <p className="text-xs text-slate-500 mt-2">Confidence: {(result.confidence * 100).toFixed(0)}%</p>
+                      <p className="mt-2 text-xs text-slate-500">Confidence: {(result.confidence * 100).toFixed(0)}%</p>
                     )}
                   </div>
+
                   <div className="mt-5">
                     <ProgressBar
                       value={result.churn_probability * 100}
                       color={result.churn_prediction === 1 ? 'rose' : 'emerald'}
-                      label="Risk Score"
+                      label="Risk score"
                     />
                   </div>
                 </Card>
 
-                {/* Top factors */}
                 {result.top_factors?.length > 0 && (
                   <Card className="p-5">
-                    <h4 className="font-display font-semibold text-white mb-4 text-sm">Key Drivers</h4>
+                    <h4 className="font-display mb-4 text-sm font-semibold text-white">Key Drivers</h4>
                     <div className="space-y-3">
-                      {result.top_factors.map((f, i) => (
-                        <div key={i}>
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="text-xs text-slate-400 font-mono truncate flex-1 mr-2">{f.feature}</span>
-                            <span className={`text-xs font-mono ${f.direction === 'increases' ? 'text-rose-400' : 'text-emerald-400'}`}>
-                              {f.direction === 'increases' ? '↑' : '↓'} {Math.abs(f.impact).toFixed(3)}
+                      {result.top_factors.map((factor, index) => (
+                        <div key={`${factor.feature}-${index}`}>
+                          <div className="mb-1.5 flex items-center justify-between gap-3">
+                            <span className="flex-1 truncate text-xs font-mono text-slate-400">{factor.feature}</span>
+                            <span className={`text-xs font-mono ${factor.direction === 'increases' ? 'text-rose-500' : 'text-emerald-500'}`}>
+                              {factor.direction === 'increases' ? '↑' : '↓'} {Math.abs(factor.impact).toFixed(3)}
                             </span>
                           </div>
+
                           <ProgressBar
-                            value={Math.abs(f.impact)}
+                            value={Math.abs(factor.impact)}
                             max={0.5}
-                            color={f.direction === 'increases' ? 'rose' : 'emerald'}
+                            color={factor.direction === 'increases' ? 'rose' : 'emerald'}
                             showValue={false}
                           />
                         </div>
@@ -269,66 +329,81 @@ export default function PredictPage() {
               <Card className="p-8">
                 <EmptyState
                   icon={BarChart2}
-                  title="Ready to Predict"
-                  description="Fill in customer details and click 'Predict Churn Risk' to see the analysis"
+                  title="Ready to predict"
+                  description="Complete the customer profile and run the model to view churn probability and the top drivers."
                 />
               </Card>
             )}
           </div>
         </div>
       ) : (
-        /* Batch upload */
         <div className="space-y-6">
-          <Card className="p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <FileText className="w-4 h-4 text-cyan-400" />
-              <h3 className="font-display font-semibold text-white">Batch CSV Upload</h3>
+          <Card className="p-5 sm:p-6">
+            <div className="mb-4 flex items-center gap-2">
+              <FileText className="h-4 w-4 text-sky-500" />
+              <h3 className="font-display text-lg font-semibold text-white">Batch CSV Upload</h3>
             </div>
+
             <div
               {...getRootProps()}
-              className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-200
-                ${isDragActive ? 'border-cyan-400 bg-cyan-500/5' : 'border-[#1E2D45] hover:border-cyan-500/50 hover:bg-cyan-500/3'}`}
+              className={`cursor-pointer rounded-[28px] border-2 border-dashed p-8 text-center transition-all duration-200 sm:p-10 ${
+                isDragActive
+                  ? 'border-sky-500 bg-sky-500/8'
+                  : 'border-[color:var(--border)] hover:border-sky-500/40 hover:bg-sky-500/4'
+              }`}
             >
               <input {...getInputProps()} />
-              <Upload className={`w-10 h-10 mx-auto mb-3 ${isDragActive ? 'text-cyan-400' : 'text-slate-600'}`} />
+              <Upload className={`mx-auto mb-3 h-10 w-10 ${isDragActive ? 'text-sky-500' : 'text-slate-600'}`} />
               {batchFile ? (
                 <div>
-                  <p className="text-white font-medium">{batchFile.name}</p>
-                  <p className="text-sm text-slate-400 mt-1">{(batchFile.size / 1024).toFixed(1)} KB</p>
+                  <p className="font-medium text-white">{batchFile.name}</p>
+                  <p className="mt-1 text-sm text-slate-400">{(batchFile.size / 1024).toFixed(1)} KB</p>
                 </div>
               ) : (
                 <div>
-                  <p className="text-slate-300 font-medium mb-1">
-                    {isDragActive ? 'Drop your CSV here' : 'Drag & drop CSV or click to browse'}
+                  <p className="mb-1 font-medium text-slate-300">
+                    {isDragActive ? 'Drop your CSV here' : 'Drag and drop a CSV or click to browse'}
                   </p>
-                  <p className="text-sm text-slate-500">Supports standard WA_Fn-UseC_-Telco-Customer-Churn.csv format</p>
+                  <p className="text-sm text-slate-500">Use the standard Telco churn dataset format for the cleanest results.</p>
                 </div>
               )}
             </div>
-            <div className="mt-4 flex gap-3">
+
+            <div className="mt-4 flex flex-col gap-3 sm:flex-row">
               <Button icon={Brain} onClick={handleBatchPredict} loading={batchLoading} disabled={!batchFile}>
                 {batchLoading ? 'Processing...' : 'Run Batch Prediction'}
               </Button>
-              {batchFile && <Button variant="secondary" onClick={() => { setBatchFile(null); setBatchResults(null); }}>Clear</Button>}
+              {batchFile && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setBatchFile(null);
+                    setBatchResults(null);
+                  }}
+                >
+                  Clear
+                </Button>
+              )}
             </div>
           </Card>
 
           {batchResults && (
             <div className="space-y-4">
-              {batchResults.demo && (
-                <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3 text-xs text-amber-400">
-                  ⚡ Demo results — showing parsed structure from your CSV
+              {batchResults.samplePreview && (
+                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-500">
+                  Sample batch preview shown using the uploaded CSV structure.
                 </div>
               )}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                 {[
                   { label: 'Total Records', value: batchResults.total_records, color: 'cyan' },
                   { label: 'High Risk', value: batchResults.high_risk_count, color: 'rose' },
                   { label: 'Medium Risk', value: batchResults.medium_risk_count, color: 'amber' },
                   { label: 'Low Risk', value: batchResults.low_risk_count, color: 'emerald' },
-                ].map(item => (
-                  <Card key={item.label} className={`p-4 text-center border-${item.color}-500/20`}>
-                    <div className="stat-number text-3xl font-bold text-white mb-1">{item.value}</div>
+                ].map((item) => (
+                  <Card key={item.label} className="p-4 text-center">
+                    <div className="stat-number mb-1 text-3xl font-bold text-white">{item.value}</div>
                     <div className="text-xs text-slate-400">{item.label}</div>
                   </Card>
                 ))}
@@ -336,25 +411,32 @@ export default function PredictPage() {
 
               {batchResults.preview?.length > 0 && (
                 <Card className="p-5">
-                  <div className="flex items-center justify-between mb-4">
-                    <h4 className="font-display font-semibold text-white">Preview (first 5 rows)</h4>
-                    <Button icon={Download} variant="secondary" size="sm" onClick={downloadResults}>Export</Button>
+                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <h4 className="font-display text-base font-semibold text-white">Preview</h4>
+                    <Button icon={Download} variant="secondary" size="sm" onClick={downloadResults}>
+                      Export
+                    </Button>
                   </div>
+
                   <div className="responsive-table">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b border-[#1E2D45]">
-                          <th className="text-left py-2 px-3 text-xs text-slate-400 font-medium">Customer</th>
-                          <th className="text-left py-2 px-3 text-xs text-slate-400 font-medium">Probability</th>
-                          <th className="text-left py-2 px-3 text-xs text-slate-400 font-medium">Risk Level</th>
+                        <tr className="border-b border-[color:var(--border)]">
+                          <th className="px-3 py-2 text-left text-xs font-medium text-slate-400">Customer</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-slate-400">Probability</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-slate-400">Risk Level</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {batchResults.preview.map((row, i) => (
-                          <tr key={i} className="border-b border-[#1E2D45]/50 hover:bg-white/3">
-                            <td className="py-2 px-3 font-mono text-slate-300 text-xs">{row.customerID || `Customer ${i + 1}`}</td>
-                            <td className="py-2 px-3 font-mono text-slate-300 text-xs">{(parseFloat(row.churn_probability) * 100).toFixed(1)}%</td>
-                            <td className="py-2 px-3"><RiskBadge level={row.risk_level} /></td>
+                        {batchResults.preview.map((row, index) => (
+                          <tr key={index} className="border-b border-[color:var(--border)]/50 hover:bg-white/3">
+                            <td className="px-3 py-2 text-xs font-mono text-slate-300">{row.customerID || `Customer ${index + 1}`}</td>
+                            <td className="px-3 py-2 text-xs font-mono text-slate-300">
+                              {(parseFloat(row.churn_probability) * 100).toFixed(1)}%
+                            </td>
+                            <td className="px-3 py-2">
+                              <RiskBadge level={row.risk_level} />
+                            </td>
                           </tr>
                         ))}
                       </tbody>
