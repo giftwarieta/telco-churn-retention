@@ -37,6 +37,56 @@ function sanitizeConsultantReply(reply) {
   return blockedPatterns.some((pattern) => normalized.includes(pattern)) ? '' : text;
 }
 
+function buildLocalConsultantFallback(content, messages = []) {
+  const normalized = (content || '').trim().toLowerCase();
+  const previousUserMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === 'user' && message.content !== content)
+    ?.content?.toLowerCase() || '';
+
+  if (/^(thanks|thank you|thankyou|thx|great|perfect|okay|ok|got it)[.! ]*$/i.test(normalized)) {
+    if (/\b(strategy|retention|offer|campaign)\b/i.test(previousUserMessage)) {
+      return 'You’re welcome. If you want, I can turn that into a more detailed retention playbook with target segments, save offers, and KPIs.';
+    }
+
+    if (/\b(roi|revenue|arpu|clv|cost)\b/i.test(previousUserMessage)) {
+      return 'You’re welcome. If helpful, I can also turn that into a simple ROI scenario with assumptions, revenue protected, and payback period.';
+    }
+
+    return 'You’re welcome. Ask the next question whenever you’re ready, and I’ll keep the answer practical and telecom-focused.';
+  }
+
+  if (/^(hi|hello|hey)[.! ]*$/i.test(normalized)) {
+    return 'Hello. I can help with churn drivers, retention strategy, pricing, ROI, segmentation, and explainability for telecom businesses.';
+  }
+
+  if (/\bmonth-to-month\b/i.test(normalized) && /\bhigh churn risk\b/i.test(normalized)) {
+    return `For month-to-month customers with high churn risk, focus on targeted contract migration, billing-friction fixes, and early save timing.
+
+Top actions:
+- Offer a clear migration incentive such as a price lock, bonus data, or premium support.
+- Intervene before the customer reaches final cancellation intent.
+- Route complaint-heavy customers into service recovery before using discounts.
+- Prioritize short-tenure and high-ARPU customers first.
+
+KPIs:
+- Contract conversion rate
+- Save rate
+- ARPU retained
+- 60/90-day post-save churn`;
+  }
+
+  if (/\broi|arpu|clv|revenue|payback|cost\b/i.test(normalized)) {
+    return `For ROI questions, anchor the answer around customers at risk, expected save rate, revenue protected, campaign cost, and payback period. If you want, I can turn your numbers into a quick scenario analysis.`;
+  }
+
+  if (/\bshap|lime|explain|model\b/i.test(normalized)) {
+    return `For explainability, the goal is to translate model drivers into business actions. I can help identify which factors are increasing churn risk, what they mean operationally, and which retention move fits each driver.`;
+  }
+
+  return `I can help with that. Share the customer segment, churn issue, or business objective, and I’ll give a sharper telecom retention recommendation with actions and KPIs.`;
+}
+
 function ConsultantAvatar({ className = '' }) {
   return (
     <img
@@ -114,7 +164,7 @@ export default function ConsultantPage() {
       const cleanReply = sanitizeConsultantReply(data.reply);
       const assistantMessage = {
         role: 'assistant',
-        content: cleanReply || `Here is a practical starting point for "${content.slice(0, 60)}": focus on contract type, first-year tenure, payment friction, service quality complaints, and save-offer timing. Prioritize the highest-risk customers with a specific incentive, a service check, and a follow-up cadence tied to ARPU and churn probability.`,
+        content: cleanReply || buildLocalConsultantFallback(content, nextMessages),
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, assistantMessage]);
@@ -123,7 +173,7 @@ export default function ConsultantPage() {
     } catch {
       const fallbackMessage = {
         role: 'assistant',
-        content: `Here is a practical starting point for "${content.slice(0, 60)}": focus on contract type, first-year tenure, payment friction, service quality complaints, and save-offer timing. Prioritize the highest-risk customers with a specific incentive, a service check, and a follow-up cadence tied to ARPU and churn probability.`,
+        content: buildLocalConsultantFallback(content, nextMessages),
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, fallbackMessage]);
@@ -186,7 +236,7 @@ export default function ConsultantPage() {
           </Card>
         </div>
 
-        <Card className="flex min-h-[68svh] flex-col overflow-hidden p-0 lg:col-span-3 lg:min-h-[calc(100svh-15rem)]">
+        <Card className="flex h-[72svh] min-h-0 max-h-[72svh] flex-col overflow-hidden p-0 lg:col-span-3 lg:h-[calc(100svh-15rem)] lg:max-h-[calc(100svh-15rem)]">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--border)] px-4 py-4 sm:px-5">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 overflow-hidden rounded-full border border-emerald-500/20 bg-emerald-500/12">
@@ -205,7 +255,7 @@ export default function ConsultantPage() {
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+          <div className="consultant-chat-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
             {messages.length === 0 ? (
               <div className="flex h-full min-h-[22rem] flex-col items-center justify-center text-center">
                 <div className="mb-5 rounded-[32px] border border-emerald-500/20 bg-emerald-500/6 p-6">

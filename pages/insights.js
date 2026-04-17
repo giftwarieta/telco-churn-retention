@@ -135,19 +135,23 @@ export default function InsightsPage() {
               <Badge color="cyan">SHAP</Badge>
             </div>
 
-            <ResponsiveContainer width="100%" height={360}>
-              <BarChart data={shapData} layout="vertical" margin={{ left: 120, right: 12 }}>
-                <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11 }} domain={[-0.4, 0.5]} />
-                <YAxis type="category" dataKey="feature" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} width={120} />
-                <ReferenceLine x={0} stroke="#334155" strokeWidth={1} />
-                <Tooltip content={<InsightsTooltip />} />
-                <Bar dataKey="shap" radius={[0, 6, 6, 0]}>
-                  {shapData.map((item, index) => (
-                    <Cell key={index} fill={item.direction === 'positive' ? '#f43f5e' : '#10b981'} fillOpacity={0.84} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="insights-chart-scroll">
+              <div className="insights-chart-stage">
+                <ResponsiveContainer width="100%" height={380}>
+                  <BarChart data={shapData} layout="vertical" margin={{ left: 132, right: 20, top: 8, bottom: 8 }}>
+                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11 }} domain={[-0.4, 0.5]} />
+                    <YAxis type="category" dataKey="feature" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} width={132} />
+                    <ReferenceLine x={0} stroke="#334155" strokeWidth={1} />
+                    <Tooltip content={<InsightsTooltip />} />
+                    <Bar dataKey="shap" radius={[0, 6, 6, 0]} barSize={26}>
+                      {shapData.map((item, index) => (
+                        <Cell key={index} fill={item.direction === 'positive' ? '#f43f5e' : '#10b981'} fillOpacity={0.84} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
           </Card>
 
           <div className="space-y-4">

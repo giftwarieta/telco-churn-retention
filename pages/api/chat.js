@@ -70,6 +70,11 @@ const TERM_DEFINITIONS = {
   },
 };
 
+const ACKNOWLEDGMENT_PATTERNS = /^(thanks|thank you|thankyou|thx|great|nice|perfect|okay|ok|got it|understood|makes sense)[.! ]*$/i;
+const GREETING_PATTERNS = /^(hi|hello|hey|good morning|good afternoon|good evening)[.! ]*$/i;
+const DEFINITION_INTENT_PATTERNS = /\b(what is|what does .* mean|define|definition|meaning|full meaning|expand|stand for|explain what .* means)\b/i;
+const RECENCY_PATTERNS = /\b(latest|current|today|recent|trend|benchmark|benchmarks|news|market update|industry update)\b/i;
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -112,10 +117,17 @@ export default async function handler(req, res) {
       throw new Error('Provider returned a service notice instead of a chat answer');
     }
 
+    if (isLowQualityReply(reply, analysis, latestUserMessage)) {
+      return res.status(200).json({
+        reply: generateFallbackResponse(latestUserMessage, analysis, webInsights, messages),
+        model: 'local-expert',
+      });
+    }
+
     return res.status(200).json({ reply, model: 'mistral' });
   } catch {
     return res.status(200).json({
-      reply: generateFallbackResponse(latestUserMessage, analysis, webInsights),
+      reply: generateFallbackResponse(latestUserMessage, analysis, webInsights, messages),
       model: 'fallback',
       offline: true,
     });
@@ -130,15 +142,27 @@ function getRecentUserMessages(messages) {
   return messages.filter((message) => message.role === 'user').map((message) => message.content?.trim() || '').filter(Boolean);
 }
 
+function getRecentAssistantMessages(messages) {
+  return messages.filter((message) => message.role === 'assistant').map((message) => message.content?.trim() || '').filter(Boolean);
+}
+
 function getDirectConsultantAnswer(messages) {
   const userMessages = getRecentUserMessages(messages);
   const latest = userMessages[userMessages.length - 1] || '';
   const previous = userMessages[userMessages.length - 2] || '';
   const latestNormalized = latest.toLowerCase();
 
+  if (ACKNOWLEDGMENT_PATTERNS.test(latestNormalized)) {
+    return buildAcknowledgmentAnswer(previous);
+  }
+
+  if (GREETING_PATTERNS.test(latestNormalized)) {
+    return 'Hello. I can help with churn drivers, retention strategy, ROI, pricing, contract migration, and explainability in telecom. Share the business question or customer segment you want to work on.';
+  }
+
   const latestTerm = extractKnownTerm(latest);
   const previousTerm = extractKnownTerm(previous);
-  const activeTerm = latestTerm || (
+  const activeTerm = (isDefinitionIntent(latest) ? latestTerm : '') || (
     /\b(full meaning|meaning|expand|what does that mean|define it|explain that)\b/i.test(latest) ? previousTerm : null
   );
 
@@ -146,7 +170,7 @@ function getDirectConsultantAnswer(messages) {
     return buildDefinitionAnswer(activeTerm);
   }
 
-  if (/^\s*what is\s+[a-z]{2,10}\??\s*$/i.test(latest)) {
+  if (/^\s*what is\s+[a-z]{2,10}\??\s*$/i.test(latest) && !extractKnownTerm(latest)) {
     const unknownTerm = latest.replace(/^\s*what is\s+/i, '').replace(/\?/g, '').trim().toUpperCase();
     return `I do not have that term in my telecom glossary yet. If you want, I can still explain it in business context if you tell me whether it relates to churn, finance, explainability, or customer experience.`;
   }
@@ -161,6 +185,42 @@ function getDirectConsultantAnswer(messages) {
 function extractKnownTerm(text = '') {
   const normalized = text.toLowerCase();
   return Object.keys(TERM_DEFINITIONS).find((term) => new RegExp(`\\b${term}\\b`, 'i').test(normalized)) || '';
+}
+
+function isDefinitionIntent(text = '') {
+  const normalized = text.trim().toLowerCase();
+
+  if (DEFINITION_INTENT_PATTERNS.test(normalized)) {
+    return true;
+  }
+
+  if (/^[a-z]{2,10}\??$/i.test(normalized) && extractKnownTerm(normalized)) {
+    return true;
+  }
+
+  if (/^what is [a-z]{2,10}\??$/i.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+function buildAcknowledgmentAnswer(previous = '') {
+  const previousNormalized = previous.toLowerCase();
+
+  if (/\b(strategy|retention|campaign|offer|playbook)\b/i.test(previousNormalized)) {
+    return 'You’re welcome. If you want, I can turn that into a step-by-step retention playbook with target segments, offers, and KPIs.';
+  }
+
+  if (/\b(roi|arpu|clv|revenue|cost)\b/i.test(previousNormalized)) {
+    return 'You’re welcome. If helpful, I can also turn that into a simple ROI scenario with assumptions, save rate, revenue protected, and payback period.';
+  }
+
+  if (/\b(shap|lime|explain|model)\b/i.test(previousNormalized)) {
+    return 'You’re welcome. If you want, I can translate the explanation into a business action plan for the affected customer segment.';
+  }
+
+  return 'You’re welcome. If you want, ask the next question and I’ll keep the answer practical, telecom-specific, and action-focused.';
 }
 
 function buildDefinitionAnswer(term) {
@@ -195,6 +255,13 @@ function analyzeQuery(query = '') {
   const numbers = [...query.matchAll(/(?:NGN|USD|EUR|GBP|\$)?\s?\d[\d,]*(?:\.\d+)?%?/gi)].map((match) => match[0]);
 
   const intent =
+    ACKNOWLEDGMENT_PATTERNS.test(normalized)
+      ? 'acknowledgment'
+      : GREETING_PATTERNS.test(normalized)
+        ? 'greeting'
+      : isDefinitionIntent(normalized)
+        ? 'definition'
+      :
     normalized.includes('shap') || normalized.includes('lime') || normalized.includes('explain')
       ? 'explainability'
       : normalized.includes('roi') || normalized.includes('arpu') || normalized.includes('clv') || normalized.includes('revenue')
@@ -208,6 +275,8 @@ function analyzeQuery(query = '') {
               : 'general';
 
   const focusAreas = [
+    normalized.includes('month-to-month') && 'month-to-month segment',
+    normalized.includes('high churn risk') && 'high-risk customers',
     normalized.includes('tenure') && 'tenure',
     normalized.includes('fiber') && 'fiber service quality',
     normalized.includes('billing') && 'billing experience',
@@ -222,7 +291,7 @@ function analyzeQuery(query = '') {
 }
 
 async function fetchWebInsights(query, analysis, context) {
-  if (!query) {
+  if (!query || !shouldFetchWebInsights(query, analysis)) {
     return { summary: '', results: [] };
   }
 
@@ -253,6 +322,20 @@ async function fetchWebInsights(query, analysis, context) {
   } catch {
     return { summary: '', results: [] };
   }
+}
+
+function shouldFetchWebInsights(query, analysis) {
+  const normalized = query.toLowerCase();
+
+  if (['acknowledgment', 'greeting', 'definition'].includes(analysis.intent)) {
+    return false;
+  }
+
+  if (RECENCY_PATTERNS.test(normalized)) {
+    return true;
+  }
+
+  return /\b(benchmark|benchmarks|case study|best practices|industry|market|competitor|telecom trends)\b/i.test(normalized);
 }
 
 function buildSearchQuery(query, analysis, context) {
@@ -318,38 +401,55 @@ function stripHtml(value = '') {
 }
 
 function buildSystemPrompt(analysis, context, webInsights) {
-  return `You are ChurnIQ's senior telecom retention consultant.
-You combine churn analytics, customer lifecycle strategy, pricing design, explainable AI interpretation, and web-informed market research.
+  return `You are ChurnIQ's senior telecom retention consultant and integrated AI business strategist.
+You are a seasoned churn management and retention strategy expert for telecom and subscription businesses. You combine churn analytics, customer lifecycle strategy, pricing design, and explainable AI interpretation (like SHAP) with live market research.
 
-Your goals:
-- Give business-appropriate answers that feel expert, specific, and immediately usable.
-- Adapt depth to the user's question instead of giving generic templates.
-- When the user mentions numbers such as ARPU, churn rate, campaign cost, CLV, or percentages, use them in your reasoning.
-- If the topic is SHAP or LIME, translate the model output into plain-English business meaning and recommended action.
-- If the topic is retention or campaign strategy, prioritize segmentation, offer design, service recovery, and measurement.
-- If the topic is ROI, show the logic clearly and state assumptions.
-- Use the live web insights below when they add useful context, examples, trends, or benchmarks.
+### Core Objectives:
+- Understand the user's actual intent before answering. 
+- Maintain conversational continuity. Short follow-ups must be interpreted in the context of the prior exchange.
+- Give business-appropriate answers that feel expert, specific, commercially aware, and immediately usable.
 
-Response rules:
-- Lead with the direct answer.
-- Use short sections or bullets when they improve clarity.
-- Be concrete about KPIs such as churn rate, save rate, ARPU, CLV, NPS, service complaints, and cost per saved customer.
-- Tie recommendations back to revenue protection, retention impact, or customer experience.
-- Do not fabricate sources, statistics, or recent events.
-- Avoid mentioning model providers, APIs, infrastructure, service notices, or backend details.
-- Do not say you are using fallback logic.
+### Conversational & Greeting Rules (CRITICAL):
+- Recognize conversational bookends ("hello", "hi", "hey", "good morning"). Respond with a welcoming, brief introduction of your role as a retention strategist and ask how you can help with their churn or analytics goals.
+- Recognize farewells ("bye", "goodbye", "see you", "thanks, bye"). End the conversation gracefully and professionally. DO NOT ask a follow-up question or force a new topic when the user is trying to leave.
+- If the user says a simple "thank you," respond briefly and naturally ("You're welcome! Let me know if you need to analyze another segment.") without launching into a new strategy.
 
-Current context:
+### Web Search & Live Insights Rules:
+- You are equipped with live web search capabilities.
+- When the 'Live web insights' variable contains data, you MUST synthesize this information to enrich your answer.
+- Explicitly signal to the user that you have searched online by using phrases like, "Based on recent online findings..." or "According to current market research..." so they know the advice is up-to-date.
+- Only use live web insights when they genuinely improve the answer. If the web insights are irrelevant or empty, rely on your core expertise.
+
+### Analytical & Strategic Rules:
+- When the user mentions numbers (ARPU, churn rate, CLV, campaign cost), explicitly use them in your math and reasoning.
+- If the topic is SHAP, LIME, or model evaluation, translate the model output into plain-English business meaning, identify the likely churn mechanism, and recommend a concrete commercial action.
+- If the topic is retention strategy, prioritize segmentation, offer design, service recovery, save timing, and measurement.
+- If the topic is ROI, show the logic clearly, state assumptions, and distinguish revenue protected from margin impact.
+
+### Output Constraints:
+- Lead with the direct answer. Answer the actual question asked, not the closest keyword match.
+- Use short sections or bullet points for readability. 
+- Be concrete about KPIs (e.g., save rate, ARPU, NPS, cost per saved customer).
+- Do not fabricate sources, statistics, benchmarks, or recent events. If data is missing, state what assumptions you are making.
+- Avoid mentioning model providers, your underlying infrastructure, or saying "I am using fallback logic."
+
+### Current Execution Context:
 - Topic hint: ${context.topic || 'telecom churn analytics'}
 - Detected intent: ${analysis.intent}
 - Focus areas: ${analysis.focusAreas.length ? analysis.focusAreas.join(', ') : 'not explicitly stated'}
 - Mentioned numbers: ${analysis.numbers.length ? analysis.numbers.join(', ') : 'none'}
-- Live web insights: ${webInsights.summary || 'No live web findings were available'}
+- Live web insights: ${webInsights.summary || 'No live web findings were available for this query.'}
 
-If the user's request is broad, respond like a strong consultant:
-1. Diagnose the likely issue.
-2. Recommend the highest-impact actions.
-3. Suggest the KPIs or experiment design needed next.`;
+### Examples of Correct Behavior:
+- User: "What are the top retention strategies for month-to-month customers showing high churn risk?"
+  Assistant: [Provides targeted actions like contract migration incentives, onboarding rescue, and billing-friction fixes. Does NOT define what churn is.]
+- User: "Hello!"
+  Assistant: "Hello! I'm your ChurnIQ retention strategist. How can we optimize your churn models or retention campaigns today?"
+- User: "Goodbye"
+  Assistant: "Goodbye! Feel free to reach out when you're ready to look at your next batch of churn data."
+- User: "What are competitors doing to retain premium users right now?"
+  Assistant: "Based on recent online findings... [incorporates webInsights summary into a strategic answer]."
+`;
 }
 
 function sanitizeAssistantReply(text = '') {
@@ -366,11 +466,81 @@ function sanitizeAssistantReply(text = '') {
   return reply;
 }
 
-function generateFallbackResponse(query, analysis, webInsights) {
+function isLowQualityReply(reply, analysis, query) {
+  const normalizedReply = reply.toLowerCase();
+  const normalizedQuery = query.toLowerCase();
+
+  if (!reply || reply.length < 24) {
+    return true;
+  }
+
+  if (analysis.intent !== 'definition' && /^\*\*[A-Z]{2,10}\*\* means \*\*/.test(reply)) {
+    return true;
+  }
+
+  if (analysis.intent === 'acknowledgment' && reply.length > 260) {
+    return true;
+  }
+
+  if ((analysis.intent === 'retention' || analysis.intent === 'contract') && /\bmeans\b|\bdefinition\b|\bfull meaning\b/i.test(normalizedReply)) {
+    return true;
+  }
+
+  if (analysis.intent === 'retention' && /\bmonth-to-month\b/i.test(normalizedQuery) && !/\bmonth-to-month\b/i.test(normalizedReply)) {
+    return true;
+  }
+
+  if (analysis.intent === 'pricing' && !/\bprice|discount|bundle|offer|arpu\b/i.test(normalizedReply)) {
+    return true;
+  }
+
+  if (analysis.intent === 'roi' && !/\broi|revenue|save rate|payback|cost\b/i.test(normalizedReply)) {
+    return true;
+  }
+
+  return false;
+}
+
+function buildLiveTip(webInsights) {
+  const snippet = webInsights.results[0]?.snippet?.trim();
+  if (!snippet) {
+    return '';
+  }
+
+  const compact = snippet.length > 220 ? `${snippet.slice(0, 217).trim()}...` : snippet;
+  return `One useful external signal: ${compact}`;
+}
+
+function generateFallbackResponse(query, analysis, webInsights, messages = []) {
   const amount = analysis.numbers.find((value) => value.includes('$') || /^NGN/i.test(value)) || null;
-  const liveTip = webInsights.results[0]?.snippet
-    ? `Live web context suggests: ${webInsights.results[0].snippet}`
-    : null;
+  const liveTip = buildLiveTip(webInsights);
+  const userMessages = getRecentUserMessages(messages);
+  const assistantMessages = getRecentAssistantMessages(messages);
+  const previousUserMessage = userMessages[userMessages.length - 2] || '';
+  const previousAssistantMessage = assistantMessages[assistantMessages.length - 1] || '';
+
+  if (analysis.intent === 'acknowledgment') {
+    if (/\b(strategy|retention|segment|offer)\b/i.test(previousUserMessage) || /\bplaybook|kpi|offer\b/i.test(previousAssistantMessage)) {
+      return 'You’re welcome. If you want, I can turn that into a step-by-step retention playbook with target segments, offers, and KPIs.';
+    }
+
+    if (/\broi|revenue|arpu|clv|payback|cost\b/i.test(previousUserMessage)) {
+      return 'You’re welcome. If helpful, I can also turn that into a simple ROI scenario with assumptions, revenue protected, and payback period.';
+    }
+
+    return 'You’re welcome. Ask the next question whenever you’re ready, and I’ll keep it practical and telecom-specific.';
+  }
+
+  if (analysis.intent === 'greeting') {
+    return 'Hello. I can help with churn strategy, retention offers, pricing, ROI, customer segmentation, and explainability. Tell me the business issue or customer segment you want to work on.';
+  }
+
+  if (analysis.intent === 'definition') {
+    const knownTerm = extractKnownTerm(query);
+    if (knownTerm) {
+      return buildDefinitionAnswer(knownTerm);
+    }
+  }
 
   if (analysis.intent === 'explainability') {
     return `Here is the right way to interpret that explainability result:
@@ -409,7 +579,7 @@ ${liveTip || 'A strong next step is to compare those driver patterns with your a
 
 ${amount ? `Because you mentioned ${amount}, I would anchor the first scenario analysis around that value and compare conservative, base, and aggressive save-rate assumptions.` : 'Start with conservative, base, and aggressive save-rate scenarios so the business can compare risk before launch.'}
 
-${liveTip || 'Use at least one external benchmark or case study to sanity-check your projected save rate before launch.'}`;
+${liveTip || 'Use a conservative, base, and upside scenario so leadership can compare risk before launch.'}`;
   }
 
   if (analysis.intent === 'pricing') {
@@ -425,11 +595,36 @@ ${liveTip || 'Use at least one external benchmark or case study to sanity-check 
 - Exclude low-value customers where the discount cost exceeds likely revenue protected.
 - Compare discount-led saves with service-led saves so you do not overuse incentives.
 
-${liveTip || 'Recent guidance often reinforces pairing pricing changes with service or bundle improvements instead of relying on discounts alone.'}`;
+${liveTip || 'In practice, pricing changes work best when paired with bundle value, service assurance, or loyalty benefits instead of relying on discounts alone.'}`;
   }
 
   if (analysis.intent === 'contract' || analysis.intent === 'retention') {
-    return `For telecom churn reduction, I would focus on the highest-yield interventions first:
+    if (/\bmonth-to-month\b/i.test(query) && /\bhigh churn risk\b/i.test(query)) {
+      return `For month-to-month customers with high churn risk, the strongest retention moves are targeted contract migration, service-friction removal, and early save timing.
+
+**Top actions**
+- Offer a clear reason to move to a longer contract: price lock, bonus data, premium support, or bundled add-ons.
+- Intervene before renewal or complaint escalation, not after repeated disengagement.
+- Fix billing friction fast for customers using electronic check or showing payment issues.
+- Route complaint-heavy customers into service recovery before making a discount offer.
+- Use onboarding rescue for short-tenure customers so they see value early.
+
+**Who to prioritize first**
+- High-ARPU month-to-month customers
+- Short-tenure customers with weak usage or repeated complaints
+- Customers with high predicted churn and low contract commitment
+
+**How to measure success**
+- Contract conversion rate
+- Save rate within 30 days
+- ARPU retained after the intervention
+- 60/90-day post-save churn
+- Cost per saved customer
+
+${liveTip || 'If you want, I can turn this into a segment-by-segment playbook for high-ARPU, short-tenure, and complaint-heavy month-to-month customers.'}`;
+    }
+
+    return `For telecom churn reduction in that context, focus on the highest-yield interventions first:
 
 **Priority segments**
 - Month-to-month customers
@@ -453,7 +648,7 @@ ${liveTip || 'Recent guidance often reinforces pairing pricing changes with serv
 ${liveTip || 'A practical enhancement is to validate those interventions against recent telecom retention case studies before rollout.'}`;
   }
 
-  return `Here is a strong way to approach that question:
+  return `The right answer depends on the customer segment, churn driver, and value at risk.
 
 **Start with diagnosis**
 - Identify which customer segment is driving the churn problem.
@@ -466,5 +661,5 @@ ${liveTip || 'A practical enhancement is to validate those interventions against
 **Measure success**
 - Track churn reduction, revenue protected, cost per saved customer, and retention durability over time.
 
-${liveTip || 'Where possible, support the plan with a recent external benchmark or case example so the recommendation is grounded.'}`;
+${liveTip || 'If you share the segment, churn pattern, and business objective, I can turn this into a more precise retention recommendation.'}`;
 }

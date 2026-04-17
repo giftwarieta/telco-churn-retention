@@ -588,11 +588,52 @@ select.input-field {
   border-radius: 18px 18px 18px 6px;
 }
 
+.consultant-chat-scroll {
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+}
+
+.consultant-chat-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.consultant-chat-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.consultant-chat-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.32);
+  border-radius: 999px;
+}
+
+.consultant-chat-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.48);
+}
+
+.insights-chart-scroll {
+  width: 100%;
+}
+
+.insights-chart-stage {
+  width: 100%;
+}
+
 .responsive-table {
   width: 100%;
 }
 
 @media (max-width: 640px) {
+  .insights-chart-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 0.35rem;
+  }
+
+  .insights-chart-stage {
+    min-width: 34rem;
+  }
+
   .responsive-table {
     display: block;
     overflow-x: auto;

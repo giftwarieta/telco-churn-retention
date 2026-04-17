@@ -72,7 +72,7 @@ export default function TrainPage() {
     } catch {
       setTrainResult(sampleTrainingResult(algorithm, testSize));
       updateStats({ totalTrainingSessions: 1 });
-      toast('Showing a sample training summary.', { icon: '•' });
+      toast('Live retraining is unavailable in this deployment, so a sample training summary is shown instead.', { icon: '•' });
     } finally {
       setLoading(false);
     }

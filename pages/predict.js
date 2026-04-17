@@ -154,6 +154,11 @@ export default function PredictPage() {
           const high = Math.floor(total * 0.28);
           const medium = Math.floor(total * 0.35);
           const low = total - high - medium;
+          const sampleRows = parsed.data.map((row, index) => ({
+            ...row,
+            churn_probability: Math.random().toFixed(3),
+            risk_level: index < 2 ? 'high' : index < 4 ? 'medium' : 'low',
+          }));
 
           setBatchResults({
             total_records: total,
@@ -162,11 +167,8 @@ export default function PredictPage() {
             low_risk_count: low,
             churn_rate: 0.28,
             avg_probability: 0.41,
-            preview: parsed.data.slice(0, 5).map((row, index) => ({
-              ...row,
-              churn_probability: Math.random().toFixed(3),
-              risk_level: index < 2 ? 'high' : index < 4 ? 'medium' : 'low',
-            })),
+            export_rows: sampleRows,
+            preview: sampleRows.slice(0, 5),
             samplePreview: true,
           });
           updateStats({ totalBatchPredictions: 1, batchFilesProcessed: 1, totalRecordsAnalyzed: total });
@@ -179,15 +181,16 @@ export default function PredictPage() {
   };
 
   const downloadResults = () => {
-    if (!batchResults?.preview) return;
+    if (!batchResults?.export_rows?.length) return;
 
-    const csv = Papa.unparse(batchResults.preview);
+    const csv = Papa.unparse(batchResults.export_rows);
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = 'churn_predictions.csv';
     anchor.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
