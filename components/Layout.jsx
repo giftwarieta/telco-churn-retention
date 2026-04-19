@@ -16,24 +16,23 @@ import {
   TrendingUp,
   Wifi,
   WifiOff,
+  UserCircle,
   Wrench,
   X,
 } from 'lucide-react';
 import { trackPageView } from '../lib/analytics';
+import { DataSourceChip, useDataSource } from './DataOnboarding';
 import { getApiBaseUrl, getApiMode } from '../lib/api';
 
-const navItems = [
+const allNavItems = [
   { href: '/', label: 'Overview', icon: LayoutDashboard },
   { href: '/predict', label: 'Predict', icon: Brain },
   { href: '/insights', label: 'Insights', icon: TrendingUp },
   { href: '/consultant', label: 'Consultant', icon: MessageSquare },
   { href: '/roi', label: 'ROI', icon: DollarSign },
-  { href: '/train', label: 'Train', icon: Wrench },
   { href: '/stats', label: 'Stats', icon: BarChart3 },
+  { href: '/about', label: 'About', icon: UserCircle },
 ];
-
-const mobilePrimaryNav = navItems.slice(0, 3);
-const mobileMoreNav = navItems.slice(3);
 
 function ThemeToggle({ theme, onToggle, compact = false }) {
   const isDark = theme === 'dark';
@@ -59,6 +58,7 @@ function ThemeToggle({ theme, onToggle, compact = false }) {
 
 export default function Layout({ children, title = 'ChurnIQ' }) {
   const router = useRouter();
+  const dataSource = useDataSource();
   const [theme, setTheme] = useState('dark');
   const [apiStatus, setApiStatus] = useState('checking');
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -134,6 +134,18 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
     window.localStorage.setItem('churniq-theme', nextTheme);
   };
 
+  const navItems = useMemo(() => {
+    if (dataSource === 'custom') {
+      return [
+        ...allNavItems.slice(0, 5),
+        { href: '/train', label: 'Train', icon: Wrench },
+        ...allNavItems.slice(5),
+      ];
+    }
+    return allNavItems;
+  }, [dataSource]);
+  const mobilePrimaryNav = navItems.slice(0, 3);
+  const mobileMoreNav = navItems.slice(3);
   const moreActive = mobileMoreNav.some((item) => item.href === router.pathname);
   const faviconHref = theme === 'light' ? '/favicon-light.svg' : '/favicon-dark.svg';
 
@@ -215,6 +227,9 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
           </div>
 
           <div className="mt-auto border-t border-[color:var(--border)] px-5 py-5">
+            <div className="mb-3">
+              <DataSourceChip />
+            </div>
             <div className="rounded-3xl border border-[color:var(--border)] bg-[color:var(--bg-soft)] p-4">
               <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Builder</div>
               <p className="mt-2 text-sm leading-relaxed text-slate-400">

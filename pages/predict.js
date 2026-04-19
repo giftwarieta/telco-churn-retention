@@ -2,11 +2,11 @@ import { useCallback, useState } from 'react';
 import Papa from 'papaparse';
 import { useDropzone } from 'react-dropzone';
 import toast from 'react-hot-toast';
-import { AlertTriangle, BarChart2, Brain, CheckCircle, Download, FileText, Upload, User } from 'lucide-react';
+import { AlertTriangle, BarChart2, Brain, CheckCircle, Download, FileText, Server, Upload, User } from 'lucide-react';
 import Layout from '../components/Layout';
 import { Button, Card, EmptyState, ProgressBar, RiskBadge, SectionHeader } from '../components/ui';
 import { predictBatch, predictSingle } from '../lib/api';
-import { addSessionEvent, updateStats } from '../lib/analytics';
+import { addSessionEvent, pushGlobalStats, updateStats } from '../lib/analytics';
 
 const DEFAULT_FORM = {
   gender: 'Male',
@@ -58,34 +58,42 @@ function getRiskLevel(probability) {
   return 'low';
 }
 
-function sampleSingleResult() {
-  const probability = 0.67;
-  return {
-    churn_probability: probability,
-    churn_prediction: 1,
-    risk_level: 'high',
-    confidence: 0.82,
-    top_factors: [
-      { feature: 'Contract_Month-to-month', impact: 0.34, direction: 'increases' },
-      { feature: 'tenure', impact: -0.21, direction: 'decreases' },
-      { feature: 'MonthlyCharges', impact: 0.18, direction: 'increases' },
-      { feature: 'InternetService_Fiber optic', impact: 0.15, direction: 'increases' },
-    ],
-    preview: true,
-  };
+function BackendError({ message }) {
+  return (
+    <Card className="p-6 border-amber-500/20">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-amber-500/10">
+          <Server className="h-4 w-4 text-amber-500" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-amber-400 mb-1">Prediction service unavailable</p>
+          <p className="text-xs text-slate-400 leading-relaxed mb-3">
+            {message || 'The FastAPI backend is not running. Start it locally to enable live predictions.'}
+          </p>
+          <div className="rounded-xl bg-[#0D1526] border border-[#1E2D45] px-4 py-3 font-mono text-xs text-slate-400">
+            uvicorn api.backend:app --reload --port 8000
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
 }
 
 export default function PredictPage() {
   const [tab, setTab] = useState('single');
   const [form, setForm] = useState(DEFAULT_FORM);
   const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [batchFile, setBatchFile] = useState(null);
   const [batchResults, setBatchResults] = useState(null);
+  const [batchError, setBatchError] = useState(null);
   const [batchLoading, setBatchLoading] = useState(false);
 
   const handleSinglePredict = async () => {
     setLoading(true);
+    setResult(null);
+    setError(null);
 
     try {
       const data = await predictSingle(form);
@@ -98,13 +106,11 @@ export default function PredictPage() {
         mediumRiskDetected: risk === 'medium' ? 1 : 0,
         lowRiskDetected: risk === 'low' ? 1 : 0,
       });
+      pushGlobalStats({ totalPredictions: 1, totalRecordsAnalyzed: 1 });
       addSessionEvent({ type: 'prediction', mode: 'single', risk });
       toast.success('Prediction complete');
-    } catch {
-      const previewResult = sampleSingleResult();
-      setResult(previewResult);
-      updateStats({ totalPredictions: 1, totalRecordsAnalyzed: 1, highRiskDetected: 1 });
-      toast('Showing a sample prediction preview.', { icon: '•' });
+    } catch (err) {
+      setError(err?.message || 'Backend unavailable');
     } finally {
       setLoading(false);
     }
@@ -113,6 +119,8 @@ export default function PredictPage() {
   const onDrop = useCallback((files) => {
     if (files[0]) {
       setBatchFile(files[0]);
+      setBatchResults(null);
+      setBatchError(null);
     }
   }, []);
 
@@ -123,12 +131,10 @@ export default function PredictPage() {
   });
 
   const handleBatchPredict = async () => {
-    if (!batchFile) {
-      toast.error('Please upload a CSV file');
-      return;
-    }
-
+    if (!batchFile) { toast.error('Please upload a CSV file'); return; }
     setBatchLoading(true);
+    setBatchResults(null);
+    setBatchError(null);
 
     try {
       const formData = new FormData();
@@ -143,38 +149,11 @@ export default function PredictPage() {
         mediumRiskDetected: data.medium_risk_count || 0,
         lowRiskDetected: data.low_risk_count || 0,
       });
+      pushGlobalStats({ batchFilesProcessed: 1, totalRecordsAnalyzed: data.total_records || 0 });
       addSessionEvent({ type: 'prediction', mode: 'batch', records: data.total_records });
       toast.success(`Processed ${data.total_records} records`);
-    } catch {
-      Papa.parse(batchFile, {
-        header: true,
-        skipEmptyLines: true,
-        complete: (parsed) => {
-          const total = parsed.data.length;
-          const high = Math.floor(total * 0.28);
-          const medium = Math.floor(total * 0.35);
-          const low = total - high - medium;
-          const sampleRows = parsed.data.map((row, index) => ({
-            ...row,
-            churn_probability: Math.random().toFixed(3),
-            risk_level: index < 2 ? 'high' : index < 4 ? 'medium' : 'low',
-          }));
-
-          setBatchResults({
-            total_records: total,
-            high_risk_count: high,
-            medium_risk_count: medium,
-            low_risk_count: low,
-            churn_rate: 0.28,
-            avg_probability: 0.41,
-            export_rows: sampleRows,
-            preview: sampleRows.slice(0, 5),
-            samplePreview: true,
-          });
-          updateStats({ totalBatchPredictions: 1, batchFilesProcessed: 1, totalRecordsAnalyzed: total });
-          toast('Showing a sample batch preview.', { icon: '•' });
-        },
-      });
+    } catch (err) {
+      setBatchError(err?.message || 'Backend unavailable');
     } finally {
       setBatchLoading(false);
     }
@@ -182,7 +161,6 @@ export default function PredictPage() {
 
   const downloadResults = () => {
     if (!batchResults?.export_rows?.length) return;
-
     const csv = Papa.unparse(batchResults.export_rows);
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -191,6 +169,10 @@ export default function PredictPage() {
     anchor.download = 'churn_predictions.csv';
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  const downloadTemplate = () => {
+    window.open('/api/template', '_blank');
   };
 
   return (
@@ -238,11 +220,7 @@ export default function PredictPage() {
                     >
                       {field.options.map((option) => {
                         const [value, label] = Array.isArray(option) ? option : [option, option];
-                        return (
-                          <option key={value} value={value}>
-                            {label}
-                          </option>
-                        );
+                        return <option key={value} value={value}>{label}</option>;
                       })}
                     </select>
                   ) : (
@@ -268,14 +246,10 @@ export default function PredictPage() {
           </Card>
 
           <div className="space-y-4 lg:col-span-2">
-            {result ? (
+            {error ? (
+              <BackendError message={error} />
+            ) : result ? (
               <>
-                {result.preview && (
-                  <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-500">
-                    Sample result shown while the live prediction service is unavailable.
-                  </div>
-                )}
-
                 <Card className={`p-6 ${result.churn_prediction === 1 ? 'border-rose-500/25' : 'border-emerald-500/25'}`}>
                   <div className="text-center">
                     <div className={`mb-4 inline-flex rounded-[24px] p-4 ${result.churn_prediction === 1 ? 'bg-rose-500/10' : 'bg-emerald-500/10'}`}>
@@ -283,7 +257,6 @@ export default function PredictPage() {
                         ? <AlertTriangle className="h-8 w-8 text-rose-500" />
                         : <CheckCircle className="h-8 w-8 text-emerald-500" />}
                     </div>
-
                     <div className="stat-number mb-1 text-5xl font-bold" style={{ color: result.churn_prediction === 1 ? '#f43f5e' : '#10b981' }}>
                       {(result.churn_probability * 100).toFixed(1)}%
                     </div>
@@ -293,7 +266,6 @@ export default function PredictPage() {
                       <p className="mt-2 text-xs text-slate-500">Confidence: {(result.confidence * 100).toFixed(0)}%</p>
                     )}
                   </div>
-
                   <div className="mt-5">
                     <ProgressBar
                       value={result.churn_probability * 100}
@@ -315,7 +287,6 @@ export default function PredictPage() {
                               {factor.direction === 'increases' ? '↑' : '↓'} {Math.abs(factor.impact).toFixed(3)}
                             </span>
                           </div>
-
                           <ProgressBar
                             value={Math.abs(factor.impact)}
                             max={0.5}
@@ -333,7 +304,7 @@ export default function PredictPage() {
                 <EmptyState
                   icon={BarChart2}
                   title="Ready to predict"
-                  description="Complete the customer profile and run the model to view churn probability and the top drivers."
+                  description="Complete the customer profile and run the model to view churn probability and top drivers."
                 />
               </Card>
             )}
@@ -342,9 +313,18 @@ export default function PredictPage() {
       ) : (
         <div className="space-y-6">
           <Card className="p-5 sm:p-6">
-            <div className="mb-4 flex items-center gap-2">
-              <FileText className="h-4 w-4 text-sky-500" />
-              <h3 className="font-display text-lg font-semibold text-white">Batch CSV Upload</h3>
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-sky-500" />
+                <h3 className="font-display text-lg font-semibold text-white">Batch CSV Upload</h3>
+              </div>
+              <button
+                onClick={downloadTemplate}
+                className="flex items-center gap-1.5 rounded-xl border border-[#1E2D45] bg-[#0D1526] px-3 py-1.5 text-xs text-slate-400 hover:text-white hover:border-slate-600 transition-colors"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download template
+              </button>
             </div>
 
             <div
@@ -367,7 +347,7 @@ export default function PredictPage() {
                   <p className="mb-1 font-medium text-slate-300">
                     {isDragActive ? 'Drop your CSV here' : 'Drag and drop a CSV or click to browse'}
                   </p>
-                  <p className="text-sm text-slate-500">Use the standard Telco churn dataset format for the cleanest results.</p>
+                  <p className="text-sm text-slate-500">Must match the template format. Download the template above if needed.</p>
                 </div>
               )}
             </div>
@@ -377,27 +357,17 @@ export default function PredictPage() {
                 {batchLoading ? 'Processing...' : 'Run Batch Prediction'}
               </Button>
               {batchFile && (
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setBatchFile(null);
-                    setBatchResults(null);
-                  }}
-                >
+                <Button variant="secondary" onClick={() => { setBatchFile(null); setBatchResults(null); setBatchError(null); }}>
                   Clear
                 </Button>
               )}
             </div>
           </Card>
 
+          {batchError && <BackendError message={batchError} />}
+
           {batchResults && (
             <div className="space-y-4">
-              {batchResults.samplePreview && (
-                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-500">
-                  Sample batch preview shown using the uploaded CSV structure.
-                </div>
-              )}
-
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                 {[
                   { label: 'Total Records', value: batchResults.total_records, color: 'cyan' },

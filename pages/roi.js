@@ -3,7 +3,7 @@ import Layout from '../components/Layout';
 import { SectionHeader, Card, Button, Badge } from '../components/ui';
 import { DollarSign, TrendingUp, Users, Calculator, Info } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid } from 'recharts';
-import { updateStats, addSessionEvent } from '../lib/analytics';
+import { addSessionEvent, pushGlobalStats, updateStats } from '../lib/analytics';
 
 function fmt(n, isCurrency = true) {
   if (isCurrency) return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', maximumFractionDigits: 0 }).format(n);
@@ -47,6 +47,7 @@ export default function ROIPage() {
       savedCustomers, revenueRecovered, clvSaved, netROI, roiPercent, paybackMonths,
     });
     updateStats({ roiCalculations: 1 });
+    pushGlobalStats({ roiCalculations: 1 });
     addSessionEvent({ type: 'roi', customers: totalCustomers });
   };
 
@@ -160,7 +161,7 @@ export default function ROIPage() {
                   <BarChart data={scenarioData}>
                     <XAxis dataKey="scenario" axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 10 }} />
                     <YAxis axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 10 }} tickFormatter={v => `₦${(v/1e6).toFixed(1)}M`} />
-                    <Tooltip contentStyle={{ background: '#0D1526', border: '1px solid #1E2D45', borderRadius: '8px', fontSize: '11px' }}
+                    <Tooltip cursor={{ fill: 'transparent' }} contentStyle={{ background: '#0D1526', border: '1px solid #1E2D45', borderRadius: '8px', fontSize: '11px' }}
                       formatter={(v) => [fmt(v), 'Net ROI']} />
                     <Bar dataKey="netROI" radius={[6, 6, 0, 0]} fill="#06B6D4" fillOpacity={0.8} />
                   </BarChart>

@@ -1,21 +1,28 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Area, AreaChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Activity, AlertTriangle, ArrowRight, BarChart2, Brain, Shield, TrendingUp, Users, Wand2 } from 'lucide-react';
+import { useRouter } from 'next/router';
+import {
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  BarChart2,
+  Brain,
+  CheckCircle2,
+  Database,
+  FileUp,
+  LineChart,
+  Lock,
+  RefreshCcw,
+  Rocket,
+  Shield,
+  Target,
+  TrendingUp,
+  Wand2,
+} from 'lucide-react';
 import Layout from '../components/Layout';
-import { Badge, Button, Card, StatCard } from '../components/ui';
-import { getStats } from '../lib/analytics';
-
-const churnTrend = [
-  { month: 'Jan', churn: 18, retained: 82 },
-  { month: 'Feb', churn: 22, retained: 78 },
-  { month: 'Mar', churn: 19, retained: 81 },
-  { month: 'Apr', churn: 25, retained: 75 },
-  { month: 'May', churn: 21, retained: 79 },
-  { month: 'Jun', churn: 17, retained: 83 },
-];
-
-const riskColors = ['#f43f5e', '#f59e0b', '#10b981'];
+import { Badge, Button, Card } from '../components/ui';
+import { DataSourceChip, STORAGE_KEY, resetDataSourceSelection, useDataSource } from '../components/DataOnboarding';
+import { getDefaultWorkspaceContext, getWorkspaceContext, setDefaultWorkspaceModel } from '../lib/workspace';
 
 const quickLinks = [
   { href: '/predict', title: 'Run Prediction', description: 'Score a single customer or upload a CSV batch.', icon: Brain, accent: 'cyan' },
@@ -24,20 +31,98 @@ const quickLinks = [
   { href: '/roi', title: 'Model ROI', description: 'Estimate campaign impact and revenue protected by retention.', icon: BarChart2, accent: 'amber' },
 ];
 
+const solutionHighlights = [
+  {
+    icon: Brain,
+    title: 'Predictive Intelligence',
+    description: 'Score churn risk quickly and identify which customers require immediate retention intervention.',
+  },
+  {
+    icon: TrendingUp,
+    title: 'Explainable AI',
+    description: 'Translate SHAP and LIME outputs into business actions your commercial teams can apply.',
+  },
+  {
+    icon: BarChart2,
+    title: 'Financial Impact Modeling',
+    description: 'Turn churn patterns into ROI, revenue-at-risk, and save-rate decisions before spending retention budget.',
+  },
+  {
+    icon: Activity,
+    title: 'Strategic Consultation',
+    description: 'Use the AI consultant for telecom-specific guidance grounded in your active data route and model context.',
+  },
+];
+
+const challengeSignals = [
+  {
+    icon: AlertTriangle,
+    title: 'Revenue leakage',
+    description: 'Churn pressure compounds quickly when high-risk customers are not isolated early enough.',
+  },
+  {
+    icon: Target,
+    title: 'Action prioritisation',
+    description: 'Commercial teams need a clear sequence of which segments to target, not only a raw risk score.',
+  },
+  {
+    icon: LineChart,
+    title: 'Decision visibility',
+    description: 'Leaders need explanation, ROI, and customer-level evidence before approving retention spend.',
+  },
+];
+
+const homeGuides = [
+  {
+    title: 'Start with the right route',
+    description: 'Choose the default expert path for immediate analysis or switch to personalized training for your own CSV workflow.',
+  },
+  {
+    title: 'Move from scoring to explanation',
+    description: 'Use prediction and insight pages together so risk scores translate into understandable churn drivers and action plans.',
+  },
+  {
+    title: 'Close the loop with action',
+    description: 'Use ROI and the consultant to turn model outputs into campaign priorities, save actions, and commercial decisions.',
+  },
+];
+
 export default function HomePage() {
-  const [stats, setStats] = useState(null);
+  const router = useRouter();
+  const dataSource = useDataSource();
+  const [workspaceContext, setWorkspaceContext] = useState(getDefaultWorkspaceContext());
 
   useEffect(() => {
-    setStats(getStats());
+    setWorkspaceContext(getWorkspaceContext());
   }, []);
 
-  const riskData = [
-    { name: 'High', value: stats?.highRiskDetected || 0 },
-    { name: 'Medium', value: stats?.mediumRiskDetected || 0 },
-    { name: 'Low', value: stats?.lowRiskDetected || 0 },
-  ];
+  const handleChangeDataRoute = () => {
+    resetDataSourceSelection();
+    router.reload();
+  };
 
-  const totalRisk = riskData.reduce((sum, entry) => sum + entry.value, 0);
+  const handleChooseDefaultPath = () => {
+    try {
+      localStorage.setItem(STORAGE_KEY, 'default');
+    } catch {}
+    setWorkspaceContext(setDefaultWorkspaceModel());
+    router.replace('/');
+  };
+
+  const handleChooseCustomPath = () => {
+    resetDataSourceSelection();
+    router.reload();
+  };
+
+  const routeLabel = dataSource === 'custom' ? 'Personalized training path' : 'Default expert model path';
+  const routeDescription =
+    dataSource === 'custom'
+      ? 'Session-based custom dataset, temporary storage, and model training from your uploaded CSV.'
+      : 'Built-in IBM Telco dataset with a pre-trained XGBoost model for immediate analysis.';
+  const customerCountLabel =
+    typeof workspaceContext.customerCount === 'number' && workspaceContext.customerCount > 0
+      ? workspaceContext.customerCount.toLocaleString()
+      : 'Pending';
 
   return (
     <Layout title="Overview">
@@ -46,6 +131,7 @@ export default function HomePage() {
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <Badge color="cyan">Modern retention workspace</Badge>
             <Badge color="amber">Responsive dashboard</Badge>
+            <Badge color={dataSource === 'custom' ? 'purple' : 'emerald'}>{dataSource === 'custom' ? 'Custom route active' : 'Default route active'}</Badge>
           </div>
 
           <h1 className="font-display max-w-3xl text-4xl font-bold leading-tight text-white sm:text-5xl">
@@ -53,8 +139,37 @@ export default function HomePage() {
           </h1>
 
           <p className="mt-4 max-w-2xl text-base leading-relaxed text-slate-400">
-            Analyze customer risk, explain model decisions, explore campaign ROI, and work across mobile or desktop without losing clarity.
+            Use one guided workspace to score churn risk, explain model behaviour, evaluate retention economics, and move from analytics into practical customer action.
           </p>
+
+          <div className="mt-6 rounded-3xl border border-sky-500/15 bg-sky-500/8 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="rounded-2xl bg-sky-500/12 p-3">
+                  <Lock className="h-5 w-5 text-sky-400" />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-white">Data Privacy Notice</div>
+                  <p className="mt-1 max-w-2xl text-sm leading-relaxed text-slate-400">
+                    This app is session-based. Custom data stays only in your browser session and is cleared when the session expires or when you change data route.
+                  </p>
+                </div>
+              </div>
+              <DataSourceChip />
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <span className="rounded-full border border-[color:var(--border)] bg-white/3 px-3 py-2 text-xs font-medium text-slate-300">
+              Active route: {routeLabel}
+            </span>
+            <span className="rounded-full border border-[color:var(--border)] bg-white/3 px-3 py-2 text-xs font-medium text-slate-300">
+              Dataset size: {customerCountLabel}
+            </span>
+            <span className="rounded-full border border-[color:var(--border)] bg-white/3 px-3 py-2 text-xs font-medium text-slate-300">
+              Model: {workspaceContext.modelLabel}
+            </span>
+          </div>
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row">
             <Link href="/predict">
@@ -73,128 +188,169 @@ export default function HomePage() {
         <Card className="p-6">
           <div className="mb-4 flex items-center gap-3">
             <div className="rounded-2xl bg-sky-500/10 p-3">
-              <Shield className="h-6 w-6 text-sky-500" />
+              <Rocket className="h-6 w-6 text-sky-500" />
             </div>
             <div>
-              <h2 className="font-display text-lg font-semibold text-white">Decision Snapshot</h2>
-              <p className="text-sm text-slate-500">What the workspace is optimized for right now.</p>
+              <h2 className="font-display text-lg font-semibold text-white">Choose Your Path</h2>
+              <p className="text-sm text-slate-500">Select the working route and make it obvious what data and model context are active.</p>
             </div>
           </div>
 
-          <div className="space-y-3 text-sm text-slate-400">
-            <div className="rounded-2xl bg-white/3 p-4">
-              Prioritize short-tenure customers, month-to-month contracts, and billing friction first.
+          <div className="rounded-3xl border border-[color:var(--border)] bg-white/3 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Current route</div>
+                <div className="mt-2 text-lg font-semibold text-white">{routeLabel}</div>
+                <p className="mt-1 text-sm leading-relaxed text-slate-400">{routeDescription}</p>
+              </div>
+              <Badge color={dataSource === 'custom' ? 'purple' : 'cyan'}>
+                {dataSource === 'custom' ? 'Custom session' : 'Default active'}
+              </Badge>
             </div>
-            <div className="rounded-2xl bg-white/3 p-4">
-              Use explainability to translate model output into account actions your team can apply.
-            </div>
-            <div className="rounded-2xl bg-white/3 p-4">
-              Stress-test campaign assumptions with ROI before you commit retention spend.
-            </div>
-          </div>
-        </Card>
-      </section>
 
-      <section className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard
-          label="Total Predictions"
-          value={stats?.totalPredictions ?? '-'}
-          subValue={`${stats?.batchFilesProcessed || 0} batch files`}
-          icon={Brain}
-          color="cyan"
-        />
-        <StatCard
-          label="Records Analyzed"
-          value={stats?.totalRecordsAnalyzed ?? '-'}
-          subValue="Across all sessions"
-          icon={Users}
-          color="purple"
-        />
-        <StatCard
-          label="High Risk Found"
-          value={stats?.highRiskDetected ?? '-'}
-          subValue={totalRisk ? `${((stats?.highRiskDetected / totalRisk) * 100 || 0).toFixed(0)}% of predictions` : 'No data yet'}
-          icon={AlertTriangle}
-          color="rose"
-        />
-        <StatCard
-          label="Consultations"
-          value={stats?.totalConsultations ?? '-'}
-          subValue="Advisory prompts explored"
-          icon={Activity}
-          color="emerald"
-        />
-      </section>
-
-      <section className="mb-6 grid gap-4 lg:grid-cols-3">
-        <Card className="p-5 lg:col-span-2">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <h3 className="font-display text-lg font-semibold text-white">Churn Trend</h3>
-              <p className="text-xs text-slate-500">Illustrative six-month benchmark view.</p>
-            </div>
-            <Badge color="slate">Reference</Badge>
-          </div>
-
-          <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={churnTrend}>
-              <defs>
-                <linearGradient id="churnArea" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.22} />
-                  <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="retainArea" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.22} />
-                  <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-              <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '14px', fontSize: '12px' }} />
-              <Area type="monotone" dataKey="churn" stroke="#f43f5e" fill="url(#churnArea)" strokeWidth={2.2} name="Churn %" />
-              <Area type="monotone" dataKey="retained" stroke="#0ea5e9" fill="url(#retainArea)" strokeWidth={2.2} name="Retained %" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </Card>
-
-        <Card className="p-5">
-          <div className="mb-4">
-            <h3 className="font-display text-lg font-semibold text-white">Risk Distribution</h3>
-            <p className="text-xs text-slate-500">Based on your recent prediction activity.</p>
-          </div>
-
-          {totalRisk > 0 ? (
-            <>
-              <ResponsiveContainer width="100%" height={160}>
-                <PieChart>
-                  <Pie data={riskData} dataKey="value" innerRadius={40} outerRadius={68} paddingAngle={4}>
-                    {riskData.map((_, index) => (
-                      <Cell key={index} fill={riskColors[index]} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-
-              <div className="space-y-2">
-                {riskData.map((entry, index) => (
-                  <div key={entry.name} className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: riskColors[index] }} />
-                      <span className="text-slate-400">{entry.name} risk</span>
+            <div className="mt-4 space-y-3">
+              <button
+                type="button"
+                onClick={handleChooseDefaultPath}
+                className={`w-full rounded-3xl border p-4 text-left transition-all ${
+                  dataSource === 'default'
+                    ? 'border-sky-500/35 bg-sky-500/10 shadow-[0_0_0_1px_rgba(14,165,233,0.08)]'
+                    : 'border-[color:var(--border)] bg-white/3 hover:border-sky-500/25 hover:bg-sky-500/6'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="rounded-2xl bg-sky-500/12 p-3">
+                    <Database className="h-5 w-5 text-sky-400" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="text-sm font-semibold text-white">Use Default Expert Model</div>
+                      {dataSource === 'default' && <Badge color="cyan">Current</Badge>}
                     </div>
-                    <span className="font-mono text-white">{entry.value}</span>
+                    <div className="mt-1 text-xs leading-relaxed text-slate-400">
+                      Move straight into the built-in IBM Telco workflow with the default model and ready-made insights.
+                    </div>
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleChooseCustomPath}
+                className={`w-full rounded-3xl border p-4 text-left transition-all ${
+                  dataSource === 'custom'
+                    ? 'border-purple-500/35 bg-purple-500/10 shadow-[0_0_0_1px_rgba(168,85,247,0.08)]'
+                    : 'border-[color:var(--border)] bg-white/3 hover:border-purple-500/25 hover:bg-purple-500/6'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="rounded-2xl bg-purple-500/12 p-3">
+                    <FileUp className="h-5 w-5 text-purple-400" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="text-sm font-semibold text-white">Setup Personalized Training</div>
+                      {dataSource === 'custom' && <Badge color="purple">Current</Badge>}
+                    </div>
+                    <div className="mt-1 text-xs leading-relaxed text-slate-400">
+                      Upload your own CSV, train a session model, and keep insights aligned to your temporary working dataset.
+                    </div>
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg-soft)] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Workspace guide</div>
+                  <div className="mt-1 text-sm font-medium text-white">Pick a route, confirm the model context, then move into prediction or training.</div>
+                </div>
+                <Button variant="ghost" size="sm" icon={RefreshCcw} onClick={handleChangeDataRoute}>
+                  Change route
+                </Button>
+              </div>
+              <div className="mt-3 text-xs leading-relaxed text-slate-500">
+                The overview is designed as your starting point, while detailed analytics live in the dedicated pages across the app.
+              </div>
+            </div>
+          </div>
+        </Card>
+      </section>
+
+      <section className="mb-6 grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+        <Card className="p-6">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="rounded-2xl bg-rose-500/10 p-3">
+              <AlertTriangle className="h-6 w-6 text-rose-400" />
+            </div>
+            <div>
+              <h2 className="font-display text-2xl font-semibold text-white">The Business Challenge</h2>
+              <p className="text-sm text-slate-500">Why this workspace matters for telecom retention.</p>
+            </div>
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+            <div>
+              <p className="max-w-3xl text-base leading-relaxed text-slate-300">
+                Customer churn represents one of the biggest revenue leaks in telecom. Protecting the right customers at the right time requires more than a churn score. Teams need model visibility, campaign economics, and a practical action path they can execute quickly.
+              </p>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                {challengeSignals.map((item) => (
+                  <div key={item.title} className="rounded-3xl border border-[color:var(--border)] bg-white/4 p-4">
+                    <div className="mb-3 w-fit rounded-2xl bg-white/6 p-2.5">
+                      <item.icon className="h-4 w-4 text-rose-300" />
+                    </div>
+                    <div className="text-sm font-semibold text-white">{item.title}</div>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-500">{item.description}</p>
                   </div>
                 ))}
               </div>
-            </>
-          ) : (
-            <div className="flex h-48 flex-col items-center justify-center text-center">
-              <div className="mb-3 rounded-[24px] bg-white/3 p-4">
-                <BarChart2 className="h-7 w-7 text-slate-500" />
-              </div>
-              <p className="text-sm text-slate-500">Run a prediction to populate this panel.</p>
             </div>
-          )}
+
+            <div className="rounded-[30px] border border-sky-500/14 bg-sky-500/6 p-5">
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-300/70">Home guide</div>
+              <div className="mt-1 text-lg font-semibold text-white">How to use the workspace effectively</div>
+
+              <div className="mt-4 space-y-3">
+                {homeGuides.map((item) => (
+                  <div key={item.title} className="rounded-2xl border border-white/8 bg-white/5 p-4">
+                    <div className="text-sm font-semibold text-white">{item.title}</div>
+                    <div className="mt-1 text-xs leading-relaxed text-slate-400">{item.description}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="rounded-2xl bg-emerald-500/10 p-3">
+              <Shield className="h-6 w-6 text-emerald-400" />
+            </div>
+            <div>
+              <h2 className="font-display text-2xl font-semibold text-white">The ChurnIQ Solution</h2>
+              <p className="text-sm text-slate-500">A guided retention workspace across prediction, insight, and action.</p>
+            </div>
+          </div>
+          <div className="space-y-4">
+            {solutionHighlights.map((item) => (
+              <div key={item.title} className="flex items-start gap-3 rounded-2xl bg-white/3 p-4">
+                <div className="rounded-2xl bg-sky-500/10 p-2.5">
+                  <item.icon className="h-4 w-4 text-sky-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-white">{item.title}</span>
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  </div>
+                  <p className="mt-1 text-sm leading-relaxed text-slate-400">{item.description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </Card>
       </section>
 
@@ -203,24 +359,28 @@ export default function HomePage() {
           <Link key={item.href} href={item.href}>
             <Card hoverable className="group h-full cursor-pointer p-5">
               <div className="mb-4 flex items-start justify-between">
-                <div className={`rounded-2xl p-3 ${
-                  item.accent === 'cyan'
-                    ? 'bg-sky-500/10'
-                    : item.accent === 'purple'
-                      ? 'bg-violet-500/10'
-                      : item.accent === 'emerald'
-                        ? 'bg-emerald-500/10'
-                        : 'bg-amber-500/10'
-                }`}>
-                  <item.icon className={`h-5 w-5 ${
+                <div
+                  className={`rounded-2xl p-3 ${
                     item.accent === 'cyan'
-                      ? 'text-sky-500'
+                      ? 'bg-sky-500/10'
                       : item.accent === 'purple'
-                        ? 'text-violet-500'
+                        ? 'bg-violet-500/10'
                         : item.accent === 'emerald'
-                          ? 'text-emerald-500'
-                          : 'text-amber-500'
-                  }`} />
+                          ? 'bg-emerald-500/10'
+                          : 'bg-amber-500/10'
+                  }`}
+                >
+                  <item.icon
+                    className={`h-5 w-5 ${
+                      item.accent === 'cyan'
+                        ? 'text-sky-500'
+                        : item.accent === 'purple'
+                          ? 'text-violet-500'
+                          : item.accent === 'emerald'
+                            ? 'text-emerald-500'
+                            : 'text-amber-500'
+                    }`}
+                  />
                 </div>
                 <ArrowRight className="h-4 w-4 text-slate-500 transition group-hover:translate-x-0.5 group-hover:text-slate-300" />
               </div>

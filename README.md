@@ -25,7 +25,6 @@ Backend (Vercel Python Function)
 
 ```bash
 npm install
-cp .env.example .env.local
 npm run dev
 ```
 
@@ -51,8 +50,8 @@ The frontend will call `/api/backend` automatically on Vercel.
 
 - Prediction, batch scoring, explainability, metrics, ROI, and health run inside `api/backend.py`.
 - Model loading is lazy and cached per warm function instance.
-- Live retraining is disabled on Vercel because serverless functions should not write persistent model files.
-- To update the model, retrain offline and redeploy the refreshed files in `models/`.
+- Custom-data training now runs as an evaluation flow from the uploaded session CSV and returns model metrics plus confusion-matrix output to the UI.
+- Session training is not persisted as a deployed model artifact. To replace the production model, retrain offline and redeploy refreshed files in `models/`.
 
 ## Pages
 
@@ -68,7 +67,7 @@ The frontend will call `/api/backend` automatically on Vercel.
 
 ## AI Consultant
 
-The consultant uses Pollinations with a telecom-focused prompt, live web context support, and frontend-safe filtering so provider or backend notices are not shown to users.
+The consultant now calls Groq through `pages/api/chat.js`. Configure `GROQ_API_KEY` and, if needed, `GROQ_ENDPOINT` in your Vercel project or local `.env.local`. You can also optionally override the default model with `GROQ_MODEL`. Backend or connection failures are filtered so end users only see a simple friendly support message.
 
 ## Design System
 

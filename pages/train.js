@@ -1,11 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/router';
 import { useDropzone } from 'react-dropzone';
 import toast from 'react-hot-toast';
-import { CheckCircle, Cpu, Info, Play, Upload } from 'lucide-react';
+import { CheckCircle, Cpu, Info, Play, Server, Upload } from 'lucide-react';
 import Layout from '../components/Layout';
+import { useDataSource } from '../components/DataOnboarding';
 import { Badge, Button, Card, ProgressBar, SectionHeader } from '../components/ui';
 import { trainModel } from '../lib/api';
 import { updateStats } from '../lib/analytics';
+import {
+  getCustomDatasetSession,
+  getDefaultWorkspaceContext,
+  getWorkspaceContext,
+  saveCustomDatasetSession,
+  setSelectedTrainingModel,
+} from '../lib/workspace';
 
 const ALGORITHMS = [
   { id: 'xgboost', label: 'XGBoost', badge: 'Recommended', color: 'cyan', desc: 'Strong overall performance for structured churn data.' },
@@ -14,41 +23,60 @@ const ALGORITHMS = [
   { id: 'lightgbm', label: 'LightGBM', badge: 'Fast', color: 'emerald', desc: 'Efficient boosting for larger datasets.' },
 ];
 
-function sampleTrainingResult(algorithm, testSize) {
-  return {
-    algorithm,
-    accuracy: (0.78 + Math.random() * 0.05).toFixed(4),
-    auc_roc: (0.82 + Math.random() * 0.04).toFixed(4),
-    precision: (0.62 + Math.random() * 0.06).toFixed(4),
-    recall: (0.51 + Math.random() * 0.08).toFixed(4),
-    f1: (0.58 + Math.random() * 0.04).toFixed(4),
-    training_samples: Math.round(7032 * (1 - testSize)),
-    test_samples: Math.round(7032 * testSize),
-    feature_count: 19,
-    training_time: (2.1 + Math.random() * 1.5).toFixed(2),
-    preview: true,
-  };
-}
-
 export default function TrainPage() {
+  const router = useRouter();
+  const dataSource = useDataSource();
   const [algorithm, setAlgorithm] = useState('xgboost');
   const [testSize, setTestSize] = useState(0.2);
   const [trainFile, setTrainFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [trainResult, setTrainResult] = useState(null);
+  const [trainError, setTrainError] = useState(null);
   const [progress, setProgress] = useState(0);
   const [phase, setPhase] = useState('');
+  const [sessionDataset, setSessionDataset] = useState(null);
+  const [workspaceContext, setWorkspaceContext] = useState(getDefaultWorkspaceContext());
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: { 'text/csv': ['.csv'] },
     multiple: false,
-    onDrop: (files) => setTrainFile(files[0] || null),
+    onDrop: async (files) => {
+      const nextFile = files[0] || null;
+      if (!nextFile) return;
+      setTrainFile(nextFile);
+      const stored = await saveCustomDatasetSession(nextFile);
+      setSessionDataset(stored);
+      setWorkspaceContext(getWorkspaceContext());
+    },
   });
+
+  useEffect(() => {
+    if (dataSource === null) {
+      return;
+    }
+    if (dataSource === 'default') {
+      router.replace('/');
+    }
+  }, [dataSource, router]);
+
+  useEffect(() => {
+    const stored = getCustomDatasetSession();
+    if (stored) {
+      setSessionDataset(stored);
+      setTrainFile({ name: stored.name, size: stored.size });
+    }
+    setWorkspaceContext(getWorkspaceContext());
+  }, []);
+
+  if (dataSource === null || dataSource === 'default') {
+    return null;
+  }
 
   const handleTrain = async () => {
     setLoading(true);
     setProgress(0);
     setTrainResult(null);
+    setTrainError(null);
 
     const steps = [
       [10, 'Loading dataset'],
@@ -65,14 +93,32 @@ export default function TrainPage() {
     }
 
     try {
-      const result = await trainModel({ algorithm, test_size: testSize });
+      const selected = ALGORITHMS.find((item) => item.id === algorithm);
+      setWorkspaceContext(
+        setSelectedTrainingModel({
+          algorithm,
+          label: selected?.label || algorithm.toUpperCase(),
+          status: 'selected',
+        })
+      );
+      const result = await trainModel({
+        algorithm,
+        test_size: testSize,
+        csv_content: sessionDataset?.content || null,
+        filename: sessionDataset?.name || null,
+      });
       setTrainResult(result);
       updateStats({ totalTrainingSessions: 1 });
+      setWorkspaceContext(
+        setSelectedTrainingModel({
+          algorithm,
+          label: selected?.label || algorithm.toUpperCase(),
+          status: 'active',
+        })
+      );
       toast.success('Training complete');
     } catch {
-      setTrainResult(sampleTrainingResult(algorithm, testSize));
-      updateStats({ totalTrainingSessions: 1 });
-      toast('Live retraining is unavailable in this deployment, so a sample training summary is shown instead.', { icon: '•' });
+      setTrainError('Training could not be completed right now. Please confirm that your dataset includes the expected churn target column and try again.');
     } finally {
       setLoading(false);
     }
@@ -82,12 +128,24 @@ export default function TrainPage() {
     <Layout title="Train Model">
       <SectionHeader
         title="Model Training"
-        subtitle="Adjust the algorithm, tune the split, and review model performance in a cleaner training workspace."
+        subtitle="Adjust the algorithm, confirm the training model, and review how the current session dataset will be used."
         icon={Cpu}
       />
 
       <div className="grid gap-6 lg:grid-cols-5">
         <div className="space-y-5 lg:col-span-2">
+          <Card className="border-purple-500/20 bg-purple-500/6 p-5">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h3 className="font-display text-sm font-semibold text-white">Session Dataset</h3>
+              <Badge color="purple">Session only</Badge>
+            </div>
+            <p className="text-xs leading-relaxed text-slate-400">
+              {sessionDataset?.name
+                ? `${sessionDataset.name} is loaded for this browser session only. It is not permanently saved and will be cleared when the session expires or when you change data route.`
+                : 'Upload a CSV for this browser session. Session uploads are not permanently saved and will be cleared when the session expires or when you change data route.'}
+            </p>
+          </Card>
+
           <Card className="p-5">
             <h3 className="font-display mb-4 text-sm font-semibold text-white">Select Algorithm</h3>
             <div className="space-y-2">
@@ -147,9 +205,12 @@ export default function TrainPage() {
               <input {...getInputProps()} />
               <Upload className="mx-auto mb-2 h-6 w-6 text-slate-600" />
               {trainFile ? (
-                <p className="text-sm text-emerald-500">{trainFile.name}</p>
+                <div>
+                  <p className="text-sm text-emerald-500">{trainFile.name}</p>
+                  {trainFile.size ? <p className="mt-1 text-[11px] text-slate-500">{(trainFile.size / 1024).toFixed(1)} KB</p> : null}
+                </div>
               ) : (
-                <p className="text-xs text-slate-500">Drop a custom CSV or continue with the built-in dataset.</p>
+                <p className="text-xs text-slate-500">Drop a custom CSV to replace the current session dataset.</p>
               )}
             </div>
             {trainFile && (
@@ -164,11 +225,33 @@ export default function TrainPage() {
           </Card>
 
           <Button icon={Play} onClick={handleTrain} loading={loading} size="lg" className="w-full">
-            {loading ? phase || 'Training...' : 'Start Training'}
+            {loading ? phase || 'Training...' : 'Confirm Model and Start Training'}
           </Button>
         </div>
 
         <div className="space-y-5 lg:col-span-3">
+          <Card className="p-5">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h3 className="font-display text-sm font-semibold text-white">Active Workspace Context</h3>
+              <Badge color={workspaceContext.modelStatus === 'active' ? 'emerald' : 'amber'}>
+                {workspaceContext.modelStatus === 'active' ? 'Active' : 'Pending'}
+              </Badge>
+            </div>
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <div className="rounded-2xl bg-white/3 px-3 py-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Dataset</div>
+                <div className="mt-1 font-medium text-white">{workspaceContext.datasetName || sessionDataset?.name || 'Session upload'}</div>
+              </div>
+              <div className="rounded-2xl bg-white/3 px-3 py-3">
+                <div className="text-xs uppercase tracking-wide text-slate-500">Selected model</div>
+                <div className="mt-1 font-medium text-white">{workspaceContext.modelLabel || 'Choose an algorithm below'}</div>
+              </div>
+            </div>
+            <p className="mt-3 text-xs leading-relaxed text-slate-500">
+              Consultant guidance and insight context will follow the active data source and selected model for this session.
+            </p>
+          </Card>
+
           {loading && (
             <Card className="p-6">
               <div className="mb-4 flex items-center gap-3">
@@ -196,14 +279,18 @@ export default function TrainPage() {
             </Card>
           )}
 
+          {trainError && (
+            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-5 flex items-start gap-3">
+              <Server className="h-4 w-4 text-amber-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-semibold text-amber-400 mb-1">Training unavailable</p>
+                <p className="text-xs text-slate-400 leading-relaxed">{trainError}</p>
+              </div>
+            </div>
+          )}
+
           {trainResult && (
             <>
-              {trainResult.preview && (
-                <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-xs text-amber-500">
-                  Sample training metrics are shown while the live training service is unavailable.
-                </div>
-              )}
-
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {[
                   { label: 'Accuracy', value: `${(parseFloat(trainResult.accuracy) * 100).toFixed(1)}%`, color: 'cyan' },
@@ -236,6 +323,68 @@ export default function TrainPage() {
                   ))}
                 </div>
               </Card>
+
+              {trainResult.model_evaluation?.length ? (
+                <Card className="p-5">
+                  <h4 className="font-display mb-3 text-sm font-semibold text-white">Model Evaluation</h4>
+                  <div className="space-y-3">
+                    {trainResult.model_evaluation.map((item) => (
+                      <div key={item.label} className="flex items-center justify-between gap-3 rounded-2xl bg-white/3 px-3 py-3">
+                        <span className="text-slate-400">{item.label}</span>
+                        <span className="font-mono text-white">
+                          {typeof item.value === 'number' ? item.value.toFixed(4) : item.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              ) : null}
+
+              {trainResult.confusion_matrix ? (
+                <Card className="p-5">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h4 className="font-display text-sm font-semibold text-white">Confusion Matrix</h4>
+                    <Badge color="purple">Evaluation</Badge>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/8 p-4">
+                      <div className="text-xs uppercase tracking-wide text-emerald-400">True Negative</div>
+                      <div className="mt-1 text-2xl font-bold text-white">{trainResult.confusion_matrix.true_negative}</div>
+                      <div className="mt-1 text-xs text-slate-400">Actual retain predicted as retain</div>
+                    </div>
+                    <div className="rounded-2xl border border-amber-500/20 bg-amber-500/8 p-4">
+                      <div className="text-xs uppercase tracking-wide text-amber-400">False Positive</div>
+                      <div className="mt-1 text-2xl font-bold text-white">{trainResult.confusion_matrix.false_positive}</div>
+                      <div className="mt-1 text-xs text-slate-400">Actual retain predicted as churn</div>
+                    </div>
+                    <div className="rounded-2xl border border-rose-500/20 bg-rose-500/8 p-4">
+                      <div className="text-xs uppercase tracking-wide text-rose-400">False Negative</div>
+                      <div className="mt-1 text-2xl font-bold text-white">{trainResult.confusion_matrix.false_negative}</div>
+                      <div className="mt-1 text-xs text-slate-400">Actual churn predicted as retain</div>
+                    </div>
+                    <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/8 p-4">
+                      <div className="text-xs uppercase tracking-wide text-cyan-400">True Positive</div>
+                      <div className="mt-1 text-2xl font-bold text-white">{trainResult.confusion_matrix.true_positive}</div>
+                      <div className="mt-1 text-xs text-slate-400">Actual churn predicted as churn</div>
+                    </div>
+                  </div>
+                  <div className="mt-4 overflow-hidden rounded-2xl border border-[color:var(--border)]">
+                    <div className="grid grid-cols-3 bg-white/3 text-center text-xs text-slate-400">
+                      <div className="px-3 py-2" />
+                      <div className="px-3 py-2">Predicted Retain</div>
+                      <div className="px-3 py-2">Predicted Churn</div>
+                    </div>
+                    <div className="grid grid-cols-3 text-center text-sm">
+                      <div className="border-t border-[color:var(--border)] bg-white/3 px-3 py-3 text-slate-400">Actual Retain</div>
+                      <div className="border-t border-[color:var(--border)] px-3 py-3 font-mono text-white">{trainResult.confusion_matrix.matrix?.[0]?.[0] ?? '-'}</div>
+                      <div className="border-t border-l border-[color:var(--border)] px-3 py-3 font-mono text-white">{trainResult.confusion_matrix.matrix?.[0]?.[1] ?? '-'}</div>
+                      <div className="border-t border-[color:var(--border)] bg-white/3 px-3 py-3 text-slate-400">Actual Churn</div>
+                      <div className="border-t border-[color:var(--border)] px-3 py-3 font-mono text-white">{trainResult.confusion_matrix.matrix?.[1]?.[0] ?? '-'}</div>
+                      <div className="border-t border-l border-[color:var(--border)] px-3 py-3 font-mono text-white">{trainResult.confusion_matrix.matrix?.[1]?.[1] ?? '-'}</div>
+                    </div>
+                  </div>
+                </Card>
+              ) : null}
 
               <Card className="border-emerald-500/20 bg-emerald-500/5 p-5">
                 <div className="flex items-start gap-3">

@@ -1,99 +1,363 @@
 import { useEffect, useRef, useState } from 'react';
 import Layout from '../components/Layout';
 import { Badge, Button, Card, SectionHeader } from '../components/ui';
-import { Copy, Lightbulb, MessageSquare, Send, Trash2, User } from 'lucide-react';
+import {
+  AlertCircle,
+  Building2,
+  Copy,
+  Database,
+  Lightbulb,
+  MessageSquare,
+  Send,
+  Sparkles,
+  Trash2,
+  User,
+} from 'lucide-react';
+import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import toast from 'react-hot-toast';
-import { updateStats, addSessionEvent } from '../lib/analytics';
+import { addSessionEvent, getStats, pushGlobalStats, updateStats } from '../lib/analytics';
 import { chatWithConsultant } from '../lib/api';
+import {
+  clearConsultantHistory,
+  getDefaultWorkspaceContext,
+  getConsultantHistory,
+  getConsultantProfile,
+  getCustomDatasetSession,
+  getWorkspaceContext,
+  setConsultantHistory,
+  setConsultantProfile,
+} from '../lib/workspace';
+import { summarizeCsvText } from '../lib/data-profile';
 
 const QUICK_PROMPTS = [
-  { label: 'Retention Strategy', prompt: 'What are the top retention strategies for month-to-month customers showing high churn risk?' },
-  { label: 'Churn Drivers', prompt: 'Explain the most common churn drivers in fiber internet customers and how to respond.' },
-  { label: 'ROI Planning', prompt: 'How should I estimate the ROI of a churn reduction campaign for a telecom business?' },
-  { label: 'SHAP Interpretation', prompt: 'How do I explain a SHAP result where tenure reduces churn probability?' },
-  { label: 'Pricing Moves', prompt: 'What pricing changes usually reduce churn without damaging revenue?' },
-  { label: 'Contract Upgrades', prompt: 'What incentives help month-to-month customers move to longer contracts?' },
+  { label: 'Dataset Overview', prompt: 'Give me a clear overview of the active dataset and what stands out most.' },
+  { label: 'Top Insights', prompt: 'What are the most important insights you can see from the active data?' },
+  { label: 'Churn Hotspots', prompt: 'Which customer segments in this data appear to be most exposed to churn risk?' },
+  { label: 'Contract Mix', prompt: 'Explain the contract mix in the data and what it means for retention strategy.' },
+  { label: 'Revenue Signals', prompt: 'What does the data suggest about monthly charges, value concentration, and churn exposure?' },
+  { label: 'Retention Priorities', prompt: 'Based on the active data, what retention priorities should we focus on first?' },
 ];
 
-function sanitizeConsultantReply(reply) {
-  const text = (reply || '').trim();
-  if (!text) {
-    return '';
-  }
+const FRIENDLY_SERVICE_MESSAGE =
+  'I am sorry, but I am having difficulty providing a reliable response right now. Please contact the administrator of this website or try again in a little while.';
+const CONSULTANT_AVATAR_SRC = '/images/consultant-avatar.png?v=4';
 
-  const normalized = text.toLowerCase();
-  const blockedPatterns = [
-    'important notice',
-    'legacy text api',
-    'enter.pollinations.ai',
-    'authenticated users',
-    'anonymous requests to text.pollinations.ai',
-    'internal server error',
-    'traceback',
-    '<!doctype html',
-    '<html',
-  ];
-
-  return blockedPatterns.some((pattern) => normalized.includes(pattern)) ? '' : text;
+function formatNumber(value) {
+  if (typeof value !== 'number') return 'not available';
+  return value.toLocaleString();
 }
 
-function buildLocalConsultantFallback(content, messages = []) {
-  const normalized = (content || '').trim().toLowerCase();
-  const previousUserMessage = [...messages]
-    .reverse()
-    .find((message) => message.role === 'user' && message.content !== content)
-    ?.content?.toLowerCase() || '';
+function buildWelcomeMessage(profile, dataSummary, workspaceContext) {
+  const insightLines = [];
 
-  if (/^(thanks|thank you|thankyou|thx|great|perfect|okay|ok|got it)[.! ]*$/i.test(normalized)) {
-    if (/\b(strategy|retention|offer|campaign)\b/i.test(previousUserMessage)) {
-      return 'You’re welcome. If you want, I can turn that into a more detailed retention playbook with target segments, save offers, and KPIs.';
-    }
-
-    if (/\b(roi|revenue|arpu|clv|cost)\b/i.test(previousUserMessage)) {
-      return 'You’re welcome. If helpful, I can also turn that into a simple ROI scenario with assumptions, revenue protected, and payback period.';
-    }
-
-    return 'You’re welcome. Ask the next question whenever you’re ready, and I’ll keep the answer practical and telecom-focused.';
+  if (dataSummary?.rowCount) {
+    insightLines.push(`- Active dataset: ${dataSummary.datasetName} with ${formatNumber(dataSummary.rowCount)} rows and ${formatNumber(dataSummary.columnCount)} columns.`);
   }
 
-  if (/^(hi|hello|hey)[.! ]*$/i.test(normalized)) {
-    return 'Hello. I can help with churn drivers, retention strategy, pricing, ROI, segmentation, and explainability for telecom businesses.';
+  if (dataSummary?.target?.positiveRate !== null && dataSummary?.target?.positiveRate !== undefined) {
+    insightLines.push(`- Observed churn rate in the active data: ${dataSummary.target.positiveRate}%.`);
   }
 
-  if (/\bmonth-to-month\b/i.test(normalized) && /\bhigh churn risk\b/i.test(normalized)) {
-    return `For month-to-month customers with high churn risk, focus on targeted contract migration, billing-friction fixes, and early save timing.
-
-Top actions:
-- Offer a clear migration incentive such as a price lock, bonus data, or premium support.
-- Intervene before the customer reaches final cancellation intent.
-- Route complaint-heavy customers into service recovery before using discounts.
-- Prioritize short-tenure and high-ARPU customers first.
-
-KPIs:
-- Contract conversion rate
-- Save rate
-- ARPU retained
-- 60/90-day post-save churn`;
+  if (Array.isArray(dataSummary?.insights) && dataSummary.insights.length > 0) {
+    insightLines.push(`- First data signal: ${dataSummary.insights[0]}`);
   }
 
-  if (/\broi|arpu|clv|revenue|payback|cost\b/i.test(normalized)) {
-    return `For ROI questions, anchor the answer around customers at risk, expected save rate, revenue protected, campaign cost, and payback period. If you want, I can turn your numbers into a quick scenario analysis.`;
-  }
+  return `Hello ${profile.userName}. I am ready to support ${profile.companyName} using the ${workspaceContext.datasetName} workspace.
 
-  if (/\bshap|lime|explain|model\b/i.test(normalized)) {
-    return `For explainability, the goal is to translate model drivers into business actions. I can help identify which factors are increasing churn risk, what they mean operationally, and which retention move fits each driver.`;
-  }
+You can ask direct questions about the active data, including:
+- dataset structure and available columns
+- churn rate, segment mix, and value patterns
+- contract, payment, and service distributions
+- insights, anomalies, and retention implications
 
-  return `I can help with that. Share the customer segment, churn issue, or business objective, and I’ll give a sharper telecom retention recommendation with actions and KPIs.`;
+${insightLines.join('\n')}`;
+}
+
+function buildUserDataContext(profile, dataSummary) {
+  try {
+    const stats = getStats();
+    const workspace = getWorkspaceContext();
+    const sessionDataset = getCustomDatasetSession();
+    const history = (stats.sessionHistory || []).slice(-20);
+
+    const predictions = history.filter((event) => event.type === 'prediction');
+    const recentPredictions = predictions.slice(-5).map((event) => ({
+      risk: event.risk,
+      preview: event.preview || null,
+    }));
+
+    const riskBreakdown = {
+      high: stats.highRiskDetected || 0,
+      medium: stats.mediumRiskDetected || 0,
+      low: stats.lowRiskDetected || 0,
+      total: (stats.highRiskDetected || 0) + (stats.mediumRiskDetected || 0) + (stats.lowRiskDetected || 0),
+    };
+
+    return {
+      topic: 'telecom churn analytics',
+      profile: {
+        userName: profile.userName,
+        companyName: profile.companyName,
+      },
+      sessionStats: {
+        totalPredictions: stats.totalPredictions || 0,
+        totalRecordsAnalyzed: stats.totalRecordsAnalyzed || 0,
+        batchFilesProcessed: stats.batchFilesProcessed || 0,
+        totalConsultations: stats.totalConsultations || 0,
+        roiCalculations: stats.roiCalculations || 0,
+        shapAnalysisRun: stats.shapAnalysisRun || 0,
+      },
+      workspace: {
+        dataSource: workspace.dataSource,
+        datasetName: workspace.datasetName,
+        customerCount: workspace.customerCount || sessionDataset?.rowCount || null,
+        datasetScope: workspace.datasetScope,
+        modelLabel: workspace.modelLabel,
+        modelStatus: workspace.modelStatus,
+      },
+      dataProfile: dataSummary,
+      riskBreakdown,
+      recentPredictions: recentPredictions.length > 0 ? recentPredictions : null,
+    };
+  } catch {
+    return {
+      topic: 'telecom churn analytics',
+      profile: {
+        userName: profile.userName,
+        companyName: profile.companyName,
+      },
+      dataProfile: dataSummary,
+    };
+  }
 }
 
 function ConsultantAvatar({ className = '' }) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  if (imageFailed) {
+    return (
+      <div className={`flex h-full w-full items-center justify-center rounded-full bg-emerald-500/15 ${className}`}>
+        <User className="h-4 w-4 text-emerald-400" />
+      </div>
+    );
+  }
+
   return (
     <img
-      src="/images/consultant-avatar.png"
+      src={CONSULTANT_AVATAR_SRC}
       alt="Consultant avatar"
-      className={`h-full w-full rounded-full object-cover ${className}`}
+      className={`h-full w-full rounded-full object-cover object-[center_18%] scale-[1.08] ${className}`}
+      loading="eager"
+      draggable="false"
+      onError={() => setImageFailed(true)}
     />
+  );
+}
+
+function buildSimpleChatFallback(content) {
+  const normalized = (content || '').trim().toLowerCase();
+
+  if (/^(thanks|thank you|thankyou|thx|great|perfect|okay|ok|got it)[.!? ]*$/i.test(normalized)) {
+    return 'You are very welcome. Are there any other specific areas or further assistance you require at this time?';
+  }
+
+  if (/^(hi|hello|hey)[.!? ]*$/i.test(normalized)) {
+    return 'Hello. I can help with churn strategy, retention offers, ROI, pricing, customer value management, explainability, and questions about the active data.';
+  }
+
+  if (/^(no|nope|that\'s all|that is all|nothing else|all good|all set|no thanks|no thank you)[.!? ]*$/i.test(normalized)) {
+    return 'It was a pleasure assisting you today. Wishing you continued success in your customer retention efforts. Goodbye!';
+  }
+
+  if (/^(bye|goodbye|exit|quit|see you)[.!? ]*$/i.test(normalized)) {
+    return 'Goodbye. Feel free to reach out anytime for further assistance with your churn strategies.';
+  }
+
+  if (/\broi|payback|arpu|clv|revenue|cost\b/i.test(normalized)) {
+    return 'To provide an accurate ROI calculation, I require at least the target customer count, expected save rate, campaign cost, and average monthly value or ARPU.';
+  }
+
+  return FRIENDLY_SERVICE_MESSAGE;
+}
+
+const VISUAL_COLORS = ['#06b6d4', '#10b981', '#38bdf8', '#f59e0b', '#8b5cf6', '#f43f5e', '#14b8a6'];
+
+function formatVisualValue(value) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return value ?? '-';
+  return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(2);
+}
+
+function VisualTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+
+  return (
+    <div className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg-card)] px-3 py-2 text-xs text-slate-200 shadow-xl">
+      {label ? <div className="mb-1 font-semibold text-white">{label}</div> : null}
+      {payload.map((entry) => (
+        <div key={`${entry.name}-${entry.value}`} className="text-slate-300">
+          {entry.name}: {formatVisualValue(entry.value)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ChatTableVisual({ visual }) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-white/8 bg-black/10">
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-left text-xs text-slate-300">
+          <thead className="bg-white/5 text-[11px] uppercase tracking-wide text-slate-400">
+            <tr>
+              {visual.columns?.map((column) => (
+                <th key={column} className="px-3 py-2 font-medium">
+                  {column}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {(visual.rows || []).map((row, index) => (
+              <tr key={`${visual.title}-${index}`} className="border-t border-white/6">
+                {row.map((value, cellIndex) => (
+                  <td key={`${index}-${cellIndex}`} className="px-3 py-2 text-slate-200">
+                    {value}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ChatPieVisual({ visual }) {
+  const data = (visual.data || []).filter((item) => typeof item?.value === 'number' && item.value >= 0);
+  if (!data.length) return null;
+
+  return (
+    <div className="rounded-2xl border border-white/8 bg-black/10 p-3">
+      <div className="h-64 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="label" innerRadius={52} outerRadius={84} paddingAngle={2}>
+              {data.map((entry, index) => (
+                <Cell key={`${entry.label}-${index}`} fill={VISUAL_COLORS[index % VISUAL_COLORS.length]} />
+              ))}
+            </Pie>
+            <Tooltip content={<VisualTooltip />} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {data.map((entry, index) => (
+          <div key={entry.label} className="flex items-center gap-2 rounded-xl bg-white/4 px-3 py-2 text-xs text-slate-300">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: VISUAL_COLORS[index % VISUAL_COLORS.length] }} />
+            <span className="flex-1">{entry.label}</span>
+            <span className="font-semibold text-white">{formatVisualValue(entry.value)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChatBarVisual({ visual }) {
+  const data = (visual.data || []).filter((item) => typeof item?.value === 'number');
+  if (!data.length) return null;
+
+  const isColumn = visual.type === 'column';
+
+  return (
+    <div className="rounded-2xl border border-white/8 bg-black/10 p-3">
+      <div className="h-72 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          {isColumn ? (
+            <BarChart data={data} margin={{ top: 8, right: 10, left: 0, bottom: 24 }}>
+              <XAxis
+                dataKey="label"
+                tick={{ fill: '#94a3b8', fontSize: 11 }}
+                angle={data.length > 4 ? -18 : 0}
+                textAnchor={data.length > 4 ? 'end' : 'middle'}
+                interval={0}
+                height={data.length > 4 ? 46 : 30}
+              />
+              <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} />
+              <Tooltip cursor={{ fill: 'transparent' }} content={<VisualTooltip />} />
+              <Bar dataKey="value" radius={[10, 10, 0, 0]}>
+                {data.map((entry, index) => (
+                  <Cell key={`${entry.label}-${index}`} fill={VISUAL_COLORS[index % VISUAL_COLORS.length]} />
+                ))}
+              </Bar>
+            </BarChart>
+          ) : (
+            <BarChart data={data} layout="vertical" margin={{ top: 8, right: 12, left: 34, bottom: 8 }}>
+              <XAxis type="number" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+              <YAxis type="category" dataKey="label" width={110} tick={{ fill: '#94a3b8', fontSize: 11 }} />
+              <Tooltip cursor={{ fill: 'transparent' }} content={<VisualTooltip />} />
+              <Bar dataKey="value" radius={[0, 10, 10, 0]}>
+                {data.map((entry, index) => (
+                  <Cell key={`${entry.label}-${index}`} fill={VISUAL_COLORS[index % VISUAL_COLORS.length]} />
+                ))}
+              </Bar>
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function DecisionTreeNode({ node }) {
+  if (!node?.label) return null;
+
+  return (
+    <div className="flex flex-col items-center gap-3">
+      <div className="min-w-[12rem] rounded-2xl border border-sky-500/15 bg-sky-500/8 px-4 py-3 text-center text-xs font-medium text-slate-100 shadow-lg shadow-sky-500/5">
+        {node.label}
+      </div>
+      {Array.isArray(node.children) && node.children.length > 0 ? (
+        <div className="flex flex-wrap justify-center gap-3">
+          {node.children.map((child, index) => (
+            <DecisionTreeNode key={`${child.label}-${index}`} node={child} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ChatDecisionTreeVisual({ visual }) {
+  if (!visual?.tree?.label) return null;
+
+  return (
+    <div className="overflow-x-auto rounded-2xl border border-white/8 bg-black/10 p-4">
+      <div className="min-w-[16rem]">
+        <DecisionTreeNode node={visual.tree} />
+      </div>
+    </div>
+  );
+}
+
+function ChatVisuals({ visuals = [] }) {
+  if (!visuals.length) return null;
+
+  return (
+    <div className="mt-3 space-y-3">
+      {visuals.map((visual, index) => (
+        <div key={`${visual.type}-${visual.title || index}`} className="space-y-2">
+          {visual.title ? <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">{visual.title}</div> : null}
+          {visual.description ? <p className="text-xs leading-relaxed text-slate-500">{visual.description}</p> : null}
+
+          {visual.type === 'table' ? <ChatTableVisual visual={visual} /> : null}
+          {visual.type === 'pie' ? <ChatPieVisual visual={visual} /> : null}
+          {visual.type === 'bar' || visual.type === 'column' ? <ChatBarVisual visual={visual} /> : null}
+          {visual.type === 'decision_tree' ? <ChatDecisionTreeVisual visual={visual} /> : null}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -107,31 +371,52 @@ function MessageBubble({ msg }) {
     setTimeout(() => setCopied(false), 1800);
   };
 
+  const isError = msg.isError;
+
   return (
     <div className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
       <div
         className={`flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-2xl border ${
           msg.role === 'user'
             ? 'border-sky-500/20 bg-sky-500/10'
-            : 'overflow-hidden rounded-full border-emerald-500/20 bg-emerald-500/10'
+            : isError
+              ? 'border-rose-500/20 bg-rose-500/10'
+              : 'overflow-hidden rounded-full border-emerald-500/20 bg-emerald-500/10'
         }`}
       >
-        {msg.role === 'user'
-          ? <User className="h-4 w-4 text-sky-500" />
-          : <ConsultantAvatar />}
+        {msg.role === 'user' ? (
+          <User className="h-4 w-4 text-sky-500" />
+        ) : isError ? (
+          <AlertCircle className="h-4 w-4 text-rose-400" />
+        ) : (
+          <ConsultantAvatar />
+        )}
       </div>
 
       <div className={`group flex max-w-[88%] flex-col gap-1 sm:max-w-[82%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-        <div className={`${msg.role === 'user' ? 'chat-user' : 'chat-assistant'} px-4 py-3`}>
-          <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-200">{msg.content}</p>
+        <div
+          className={`${
+            msg.role === 'user'
+              ? 'chat-user'
+              : isError
+                ? 'rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3'
+                : 'chat-assistant'
+          } px-4 py-3`}
+        >
+          <p className={`whitespace-pre-wrap text-sm leading-relaxed ${isError ? 'text-rose-300' : 'text-slate-200'}`}>
+            {msg.content}
+          </p>
+          {!isError && Array.isArray(msg.visuals) && msg.visuals.length > 0 ? <ChatVisuals visuals={msg.visuals} /> : null}
         </div>
 
         <div className={`flex items-center gap-2 text-[10px] text-slate-500 opacity-80 transition group-hover:opacity-100 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
           <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-          <button onClick={copy} className="inline-flex items-center gap-1 hover:text-slate-300" type="button">
-            <Copy className="h-3 w-3" />
-            {copied ? 'Copied' : 'Copy'}
-          </button>
+          {!isError && (
+            <button onClick={copy} className="inline-flex items-center gap-1 hover:text-slate-300" type="button">
+              <Copy className="h-3 w-3" />
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -142,16 +427,115 @@ export default function ConsultantPage() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [workspaceContext, setWorkspaceContext] = useState(getDefaultWorkspaceContext());
+  const [consultantProfileState, setConsultantProfileState] = useState({ userName: '', companyName: '', updatedAt: null });
+  const [profileDraft, setProfileDraft] = useState({ userName: '', companyName: '', updatedAt: null });
+  const [dataSummary, setDataSummary] = useState(null);
+  const [dataSummaryLoading, setDataSummaryLoading] = useState(true);
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
+
+  const profileReady = Boolean(consultantProfileState.userName && consultantProfileState.companyName);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages, loading]);
 
+  useEffect(() => {
+    setConsultantHistory(messages);
+  }, [messages]);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadContext = async () => {
+      const workspace = getWorkspaceContext();
+      const storedProfile = getConsultantProfile();
+      const storedHistory = getConsultantHistory();
+
+      if (!active) return;
+      setWorkspaceContext(workspace);
+      setConsultantProfileState(storedProfile);
+      setProfileDraft(storedProfile);
+      if (storedHistory.length > 0) {
+        setMessages(storedHistory);
+      }
+      setDataSummaryLoading(true);
+
+      try {
+        let summary = null;
+
+        if (workspace.dataSource === 'custom') {
+          const sessionDataset = getCustomDatasetSession();
+          if (sessionDataset?.content) {
+            summary = summarizeCsvText(sessionDataset.content, {
+              datasetName: sessionDataset.name || workspace.datasetName,
+            });
+          }
+        } else {
+          const response = await fetch('/api/dataset-summary');
+          const payload = await response.json().catch(() => ({}));
+          summary = payload?.summary || null;
+        }
+
+        if (!active) return;
+        setDataSummary(summary);
+
+        if (storedProfile.userName && storedProfile.companyName && storedHistory.length === 0) {
+          setMessages([
+            {
+              role: 'assistant',
+              content: buildWelcomeMessage(storedProfile, summary, workspace),
+              timestamp: Date.now(),
+            },
+          ]);
+        }
+      } catch {
+        if (active) setDataSummary(null);
+      } finally {
+        if (active) setDataSummaryLoading(false);
+      }
+    };
+
+    loadContext();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleSaveProfile = () => {
+    const nextProfile = {
+      userName: String(profileDraft.userName || '').trim(),
+      companyName: String(profileDraft.companyName || '').trim(),
+    };
+
+    if (!nextProfile.userName || !nextProfile.companyName) {
+      toast.error('Please enter your preferred name and organisation name.');
+      return;
+    }
+
+    const saved = setConsultantProfile(nextProfile);
+    const welcomeMessage = {
+      role: 'assistant',
+      content: buildWelcomeMessage(saved, dataSummary, getWorkspaceContext()),
+      timestamp: Date.now(),
+    };
+
+    setConsultantProfileState(saved);
+    setProfileDraft(saved);
+    setMessages([welcomeMessage]);
+    toast.success('Consultant workspace is ready');
+  };
+
   const sendMessage = async (text) => {
     const content = (text || input).trim();
     if (!content || loading) return;
+
+    if (!profileReady) {
+      toast.error('Please tell me your preferred name and organisation first.');
+      return;
+    }
 
     setInput('');
     const userMessage = { role: 'user', content, timestamp: Date.now() };
@@ -160,24 +544,31 @@ export default function ConsultantPage() {
     setLoading(true);
 
     try {
-      const data = await chatWithConsultant(nextMessages, { topic: 'telecom churn analytics' });
-      const cleanReply = sanitizeConsultantReply(data.reply);
-      const assistantMessage = {
-        role: 'assistant',
-        content: cleanReply || buildLocalConsultantFallback(content, nextMessages),
-        timestamp: Date.now(),
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+      const context = buildUserDataContext(consultantProfileState, dataSummary);
+      const data = await chatWithConsultant(nextMessages, context);
+
+      const reply = (data.reply || '').trim();
+      if (!reply) {
+        throw new Error('Empty response from AI service');
+      }
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: reply,
+          visuals: Array.isArray(data.visuals) ? data.visuals : [],
+          timestamp: Date.now(),
+        },
+      ]);
       updateStats({ totalConsultations: 1 });
+      pushGlobalStats({ totalConsultations: 1 });
       addSessionEvent({ type: 'consultation', preview: content.slice(0, 60) });
     } catch {
-      const fallbackMessage = {
-        role: 'assistant',
-        content: buildLocalConsultantFallback(content, nextMessages),
-        timestamp: Date.now(),
-      };
-      setMessages((prev) => [...prev, fallbackMessage]);
-      toast('A guided response was shown to keep the workflow moving.');
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: buildSimpleChatFallback(content), timestamp: Date.now(), isError: true },
+      ]);
     } finally {
       setLoading(false);
     }
@@ -195,48 +586,119 @@ export default function ConsultantPage() {
     event.target.style.height = `${Math.min(event.target.scrollHeight, 132)}px`;
   };
 
+  const handleClearChat = () => {
+    clearConsultantHistory();
+    setMessages([]);
+  };
+
+  const churnSummary = dataSummary?.target?.positiveRate;
+  const topInsight = dataSummary?.insights?.[0];
+
   return (
     <Layout title="AI Consultant">
       <SectionHeader
         title="AI Business Consultant"
-        subtitle="Ask for retention tactics, churn interpretation, ROI framing, or telecom strategy support."
+        subtitle="Ask about the active data, explore churn insights, and get telecom strategy support grounded in your selected dataset."
         icon={MessageSquare}
         action={<Badge color="emerald">Advisory Workspace</Badge>}
       />
 
-      <div className="flex flex-col gap-4 lg:grid lg:min-h-[calc(100svh-13rem)] lg:grid-cols-4 lg:items-start lg:gap-6">
-        <div className="space-y-4 lg:col-span-1">
-          <Card className="p-4 sm:p-5">
-            <div className="mb-4 flex items-center gap-2">
-              <Lightbulb className="h-4 w-4 text-amber-500" />
-              <span className="text-sm font-semibold text-white">Quick prompts</span>
-            </div>
+      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[0.95fr_2.05fr] lg:items-start lg:gap-6">
+        <div className="order-2 space-y-4 lg:order-1">
+          {!profileReady && (
+            <Card className="p-4 sm:p-5">
+              <div className="mb-3 flex items-center gap-2">
+                <User className="h-4 w-4 text-sky-400" />
+                <span className="text-sm font-semibold text-white">Consultant setup</span>
+              </div>
+              <p className="mb-4 text-sm leading-relaxed text-slate-400">
+                Before chat starts, tell me your preferred name and your organisation so the conversation can be personalised.
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-xs uppercase tracking-wide text-slate-500">Preferred name</label>
+                  <input
+                    value={profileDraft.userName || ''}
+                    onChange={(event) => setProfileDraft((prev) => ({ ...prev, userName: event.target.value }))}
+                    className="input-field w-full rounded-2xl px-3 py-3 text-sm"
+                    placeholder="Enter your preferred name"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs uppercase tracking-wide text-slate-500">Organisation</label>
+                  <input
+                    value={profileDraft.companyName || ''}
+                    onChange={(event) => setProfileDraft((prev) => ({ ...prev, companyName: event.target.value }))}
+                    className="input-field w-full rounded-2xl px-3 py-3 text-sm"
+                    placeholder="Enter your organisation name"
+                  />
+                </div>
+                <Button icon={Building2} onClick={handleSaveProfile} className="w-full">
+                  Start Consultant Session
+                </Button>
+              </div>
+            </Card>
+          )}
 
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-              {QUICK_PROMPTS.map((item) => (
-                <button
-                  key={item.label}
-                  onClick={() => sendMessage(item.prompt)}
-                  disabled={loading}
-                  type="button"
-                  className="rounded-2xl border border-transparent bg-white/3 px-3 py-3 text-left transition-all duration-200 hover:border-sky-500/20 hover:bg-sky-500/8"
-                >
-                  <div className="mb-1 text-sm font-medium text-slate-300">{item.label}</div>
-                  <div className="line-clamp-2 text-xs leading-relaxed text-slate-500">{item.prompt}</div>
-                </button>
-              ))}
+          <Card className="p-4 sm:p-5">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Active Workspace</div>
+              <Badge color={workspaceContext.dataSource === 'custom' ? 'purple' : 'cyan'}>
+                {workspaceContext.dataSource === 'custom' ? 'Custom session' : 'Default workspace'}
+              </Badge>
             </div>
+            <div className="grid gap-3 text-sm sm:grid-cols-3 lg:grid-cols-1">
+              <div className="rounded-2xl bg-white/3 px-3 py-3">
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">Dataset</div>
+                <div className="mt-1 font-medium text-white">{workspaceContext.datasetName}</div>
+              </div>
+              <div className="rounded-2xl bg-white/3 px-3 py-3">
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">Model</div>
+                <div className="mt-1 font-medium text-white">{workspaceContext.modelLabel}</div>
+              </div>
+              <div className="rounded-2xl bg-white/3 px-3 py-3">
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">Rows available</div>
+                <div className="mt-1 font-medium text-white">
+                  {dataSummaryLoading ? 'Loading data...' : dataSummary?.rowCount ? formatNumber(dataSummary.rowCount) : formatNumber(workspaceContext.customerCount)}
+                </div>
+              </div>
+            </div>
+            <p className="mt-3 text-xs leading-relaxed text-slate-500">
+              Ask questions directly about the active data and the consultant will use this workspace context when responding.
+            </p>
           </Card>
 
           <Card className="p-4 sm:p-5">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Coverage</div>
-            <p className="text-sm leading-relaxed text-slate-400">
-              Best for churn drivers, retention design, customer communication ideas, explainability interpretation, and business impact framing.
-            </p>
+            <div className="mb-3 flex items-center gap-2">
+              <Database className="h-4 w-4 text-emerald-400" />
+              <span className="text-sm font-semibold text-white">Data snapshot</span>
+            </div>
+            {dataSummaryLoading ? (
+              <p className="text-sm text-slate-500">Loading the active dataset summary...</p>
+            ) : dataSummary ? (
+              <div className="space-y-3 text-sm">
+                <div className="rounded-2xl bg-white/3 px-3 py-3">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Churn snapshot</div>
+                  <div className="mt-1 font-medium text-white">
+                    {typeof churnSummary === 'number' ? `${churnSummary}% churn rate` : 'Target metric not available'}
+                  </div>
+                </div>
+                {topInsight && (
+                  <div className="rounded-2xl bg-white/3 px-3 py-3 text-xs leading-relaxed text-slate-400">
+                    {topInsight}
+                  </div>
+                )}
+                <p className="text-xs leading-relaxed text-slate-500">
+                  You can ask about columns, customer mix, churn patterns, top-risk segments, averages, and notable findings from the selected data.
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">Dataset summary is not available right now, but you can still ask broader telecom questions.</p>
+            )}
           </Card>
         </div>
 
-        <Card className="flex h-[72svh] min-h-0 max-h-[72svh] flex-col overflow-hidden p-0 lg:col-span-3 lg:h-[calc(100svh-15rem)] lg:max-h-[calc(100svh-15rem)]">
+        <Card className="order-1 flex h-[calc(100svh-5.5rem)] min-h-0 max-h-[calc(100svh-5.5rem)] flex-col overflow-hidden p-0 lg:order-2 lg:h-[calc(100svh-8.75rem)] lg:max-h-[calc(100svh-8.75rem)]">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--border)] px-4 py-4 sm:px-5">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 overflow-hidden rounded-full border border-emerald-500/20 bg-emerald-500/12">
@@ -244,41 +706,44 @@ export default function ConsultantPage() {
               </div>
               <div>
                 <div className="font-display text-sm font-semibold text-white sm:text-base">Consultant Chat</div>
-                <div className="text-xs text-slate-500">Business-focused telecom retention guidance</div>
+                <div className="text-xs text-slate-500">
+                  {profileReady
+                    ? `Data-aware guidance for ${consultantProfileState.companyName}`
+                    : 'Complete your setup to begin a personalised chat'}
+                </div>
               </div>
             </div>
 
-            {messages.length > 0 && (
-              <Button icon={Trash2} variant="ghost" size="sm" onClick={() => setMessages([])}>
+            {messages.length > 0 && profileReady && (
+              <Button icon={Trash2} variant="ghost" size="sm" onClick={handleClearChat}>
                 Clear
               </Button>
             )}
           </div>
 
           <div className="consultant-chat-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
-            {messages.length === 0 ? (
-              <div className="flex h-full min-h-[22rem] flex-col items-center justify-center text-center">
-                <div className="mb-5 rounded-[32px] border border-emerald-500/20 bg-emerald-500/6 p-6">
+            {!profileReady ? (
+              <div className="flex h-full min-h-[14rem] flex-col items-center justify-center text-center">
+                <div className="rounded-[28px] border border-sky-500/20 bg-sky-500/6 p-6">
                   <div className="mx-auto mb-3 h-16 w-16 overflow-hidden rounded-full border border-emerald-500/20">
                     <ConsultantAvatar />
                   </div>
-                  <h3 className="font-display mb-2 text-2xl font-bold text-white">Start the conversation</h3>
+                  <h3 className="font-display mb-2 text-2xl font-bold text-white">Personalise your consultant</h3>
                   <p className="max-w-md text-sm leading-relaxed text-slate-400">
-                    Ask about churn risk patterns, campaign priorities, explainability outputs, offer design, or revenue impact.
+                    Enter your preferred name and organisation first. After that, you can ask direct questions about the active dataset, get insights from the data, and use the suggested prompts.
                   </p>
                 </div>
-
-                <div className="flex max-w-2xl flex-wrap justify-center gap-2">
-                  {QUICK_PROMPTS.slice(0, 4).map((item) => (
-                    <button
-                      key={item.label}
-                      onClick={() => sendMessage(item.prompt)}
-                      type="button"
-                      className="rounded-full border border-[color:var(--border)] bg-white/5 px-4 py-2 text-xs font-medium text-slate-400 transition hover:border-emerald-500/20 hover:text-emerald-500"
-                    >
-                      {item.label}
-                    </button>
-                  ))}
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="flex h-full min-h-[14rem] flex-col items-center justify-center text-center">
+                <div className="rounded-[28px] border border-emerald-500/20 bg-emerald-500/6 p-6">
+                  <div className="mx-auto mb-3 h-16 w-16 overflow-hidden rounded-full border border-emerald-500/20">
+                    <ConsultantAvatar />
+                  </div>
+                  <h3 className="font-display mb-2 text-2xl font-bold text-white">Ask anything about the data</h3>
+                  <p className="max-w-md text-sm leading-relaxed text-slate-400">
+                    You can ask about churn rate, segment mix, contract patterns, customer counts, averages, trends, and what the active data implies for retention strategy.
+                  </p>
                 </div>
               </div>
             ) : (
@@ -311,7 +776,12 @@ export default function ConsultantPage() {
             )}
           </div>
 
-          <div className="border-t border-[color:var(--border)] px-4 py-4 sm:px-5">
+          <div className="border-t border-[color:var(--border)] px-4 py-3 sm:px-5">
+            <div className="mb-2 hidden items-center gap-2 text-xs text-slate-500 sm:flex">
+              <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
+              Ask questions about the active data, or tap a prompt below to get started quickly.
+            </div>
+
             <div className="flex items-end gap-3">
               <textarea
                 ref={textareaRef}
@@ -319,19 +789,45 @@ export default function ConsultantPage() {
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={handleKeyDown}
                 onInput={resizeTextarea}
-                placeholder="Ask about retention playbooks, churn drivers, pricing, or SHAP insights..."
+                placeholder={
+                  profileReady
+                    ? 'Ask about churn rate, segment mix, data insights, pricing signals, or retention strategy...'
+                    : 'Complete your consultant setup to start chatting...'
+                }
                 rows={1}
-                className="input-field min-h-[50px] max-h-[132px] flex-1 resize-none rounded-2xl px-4 py-3 text-sm"
+                disabled={!profileReady}
+                className="input-field min-h-[50px] max-h-[132px] flex-1 resize-none rounded-2xl px-4 py-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               />
               <Button
                 icon={Send}
                 onClick={() => sendMessage()}
-                disabled={!input.trim() || loading}
+                disabled={!profileReady || !input.trim() || loading}
                 loading={loading}
                 className="h-[50px] flex-shrink-0"
               >
                 Send
               </Button>
+            </div>
+
+            <div className="mt-3">
+              <div className="mb-2 flex items-center gap-2">
+                <Lightbulb className="h-4 w-4 text-amber-500" />
+                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Suggested prompts</span>
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-1 sm:grid sm:overflow-visible sm:pb-0 sm:grid-cols-2 xl:grid-cols-3">
+                {QUICK_PROMPTS.map((item) => (
+                  <button
+                    key={item.label}
+                    onClick={() => sendMessage(item.prompt)}
+                    disabled={loading || !profileReady}
+                    type="button"
+                    className="min-w-[15rem] flex-shrink-0 rounded-2xl border border-transparent bg-white/3 px-3 py-3 text-left transition-all duration-200 hover:border-sky-500/20 hover:bg-sky-500/8 disabled:cursor-not-allowed disabled:opacity-50 sm:min-w-0 sm:flex-shrink"
+                  >
+                    <div className="mb-1 text-sm font-medium text-slate-300">{item.label}</div>
+                    <div className="line-clamp-2 text-xs leading-relaxed text-slate-500">{item.prompt}</div>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         </Card>

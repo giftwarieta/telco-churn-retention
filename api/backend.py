@@ -13,7 +13,20 @@ import pandas as pd
 from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.model_selection import train_test_split
+
+try:
+    from xgboost import XGBClassifier
+except Exception:
+    XGBClassifier = None
+
+try:
+    from lightgbm import LGBMClassifier
+except Exception:
+    LGBMClassifier = None
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 MODELS_DIR = ROOT_DIR / "models"
@@ -25,13 +38,14 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 try:
-    from src.processor import clean_and_prepare, engineer_features
+    from src.processor import clean_and_prepare, engineer_features, get_features
 
     SRC_AVAILABLE = True
 except Exception:
     SRC_AVAILABLE = False
     clean_and_prepare = None
     engineer_features = None
+    get_features = None
 
 
 app = FastAPI(
@@ -75,6 +89,8 @@ class TrainParams(BaseModel):
     algorithm: str = "xgboost"
     test_size: float = 0.2
     data_path: Optional[str] = None
+    csv_content: Optional[str] = None
+    filename: Optional[str] = None
 
 
 class ROIParams(BaseModel):
@@ -187,6 +203,74 @@ def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
 
     encoded = encoded[feature_names].fillna(0)
     return encoded.astype(float)
+
+
+def prepare_training_data(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+    frame = df.copy()
+
+    if SRC_AVAILABLE and clean_and_prepare:
+        frame = clean_and_prepare(frame)
+    else:
+        frame = _normalize_customer_frame(frame)
+
+    if "Churn_Label" in frame.columns:
+        target = pd.to_numeric(frame["Churn_Label"], errors="coerce").fillna(0).astype(int)
+    elif "Churn" in frame.columns:
+        target = frame["Churn"].astype(str).str.strip().str.lower().isin(["yes", "1", "true", "churn"]).astype(int)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Training requires a target column named Churn or Churn_Label in the uploaded dataset.",
+        )
+
+    if SRC_AVAILABLE and get_features:
+        try:
+            features = get_features(frame)
+            return features.astype(float), target
+        except Exception:
+            pass
+
+    if SRC_AVAILABLE and engineer_features:
+        try:
+            frame = engineer_features(frame)
+        except Exception:
+            frame = _apply_feature_engineering(frame)
+    else:
+        frame = _apply_feature_engineering(frame)
+
+    feature_frame = frame.drop(columns=["customerID", "Churn", "Churn_Label"], errors="ignore")
+    feature_frame = pd.get_dummies(feature_frame, drop_first=True).fillna(0)
+    return feature_frame.astype(float), target
+
+
+def build_training_estimator(algorithm: str):
+    normalized = (algorithm or "xgboost").strip().lower()
+
+    if normalized == "random_forest":
+        return RandomForestClassifier(n_estimators=150, random_state=42)
+
+    if normalized == "logistic":
+        return LogisticRegression(max_iter=1000, random_state=42)
+
+    if normalized == "lightgbm":
+        if LGBMClassifier is not None:
+            return LGBMClassifier(random_state=42, n_estimators=180)
+        return GradientBoostingClassifier(random_state=42)
+
+    if normalized == "xgboost":
+        if XGBClassifier is not None:
+            return XGBClassifier(
+                n_estimators=180,
+                max_depth=5,
+                learning_rate=0.08,
+                subsample=0.9,
+                colsample_bytree=0.9,
+                eval_metric="logloss",
+                random_state=42,
+            )
+        return GradientBoostingClassifier(random_state=42)
+
+    return GradientBoostingClassifier(random_state=42)
 
 
 def get_risk_level(probability: float) -> str:
@@ -322,7 +406,7 @@ def health():
         "status": "ok" if model_loaded else "degraded",
         "deployment": "vercel-python-function",
         "model_loaded": model_loaded,
-        "training_supported": False,
+        "training_supported": True,
         "src_available": SRC_AVAILABLE,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": app.version,
@@ -340,7 +424,7 @@ def model_info():
     info = {
         "model_type": type(model).__name__,
         "feature_count": len(feature_names),
-        "training_supported": False,
+        "training_supported": True,
         "src_available": SRC_AVAILABLE,
     }
 
@@ -456,11 +540,93 @@ def explain_lime(customer: CustomerData):
 
 
 @app.post("/train")
-def train(_: TrainParams):
-    raise HTTPException(
-        status_code=501,
-        detail="Live model retraining is disabled on the Vercel deployment. Train offline and redeploy the updated model artifacts.",
-    )
+def train(params: TrainParams):
+    try:
+        if params.csv_content:
+            training_frame = pd.read_csv(io.StringIO(params.csv_content))
+        elif params.data_path:
+            training_frame = pd.read_csv(params.data_path)
+        else:
+            default_candidates = sorted((ROOT_DIR / "data").glob("*.csv"))
+            if not default_candidates:
+                raise HTTPException(status_code=404, detail="No training dataset was found.")
+            training_frame = pd.read_csv(default_candidates[0])
+
+        features, target = prepare_training_data(training_frame)
+        if len(features) < 10:
+            raise HTTPException(status_code=400, detail="The training dataset is too small to evaluate reliably.")
+
+        stratify_target = target if target.nunique() > 1 else None
+        x_train, x_test, y_train, y_test = train_test_split(
+            features,
+            target,
+            test_size=params.test_size,
+            random_state=42,
+            stratify=stratify_target,
+        )
+
+        estimator = build_training_estimator(params.algorithm)
+        started_at = datetime.now(timezone.utc)
+        import time
+
+        start_time = time.perf_counter()
+        estimator.fit(x_train, y_train)
+        elapsed = round(time.perf_counter() - start_time, 2)
+
+        y_pred = estimator.predict(x_test)
+        if hasattr(estimator, "predict_proba"):
+            y_prob = estimator.predict_proba(x_test)[:, 1]
+        else:
+            raw_scores = estimator.decision_function(x_test)
+            y_prob = 1 / (1 + np.exp(-raw_scores))
+
+        tn, fp, fn, tp = confusion_matrix(y_test, y_pred, labels=[0, 1]).ravel()
+
+        accuracy = round(float(accuracy_score(y_test, y_pred)), 4)
+        precision = round(float(precision_score(y_test, y_pred, zero_division=0)), 4)
+        recall = round(float(recall_score(y_test, y_pred, zero_division=0)), 4)
+        f1 = round(float(f1_score(y_test, y_pred, zero_division=0)), 4)
+        try:
+            auc_roc = round(float(roc_auc_score(y_test, y_prob)), 4)
+        except Exception:
+            auc_roc = 0.5
+
+        return {
+            "algorithm": params.algorithm,
+            "accuracy": accuracy,
+            "auc_roc": auc_roc,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "training_samples": int(len(x_train)),
+            "test_samples": int(len(x_test)),
+            "feature_count": int(x_train.shape[1]),
+            "training_time": elapsed,
+            "trained_at": started_at.isoformat(),
+            "dataset_name": params.filename or params.data_path or "session-upload.csv",
+            "model_evaluation": [
+                {"label": "Accuracy", "value": accuracy},
+                {"label": "AUC-ROC", "value": auc_roc},
+                {"label": "Precision", "value": precision},
+                {"label": "Recall", "value": recall},
+                {"label": "F1 Score", "value": f1},
+            ],
+            "confusion_matrix": {
+                "labels": ["Retain", "Churn"],
+                "matrix": [
+                    [int(tn), int(fp)],
+                    [int(fn), int(tp)],
+                ],
+                "true_negative": int(tn),
+                "false_positive": int(fp),
+                "false_negative": int(fn),
+                "true_positive": int(tp),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Training could not be completed right now.")
 
 
 @app.post("/roi/calculate")
@@ -486,3 +652,12 @@ def roi_calculate(params: ROIParams):
         "roi_percent": round(float(roi_percent), 2),
         "payback_months": round(float(payback_months), 2),
     }
+
+
+# Vercel serverless handler — wraps the FastAPI app for Vercel's Python runtime
+try:
+    from mangum import Mangum
+    handler = Mangum(app, lifespan="off")
+except ImportError:
+    # Fallback: expose app directly for environments where mangum is not yet installed
+    handler = app
