@@ -1,19 +1,7 @@
-# ChurnIQ FastAPI Backend Requirements
-# Drop-in replacement for Streamlit app.py
-
-fastapi
-uvicorn[standard]
-pydantic
-python-multipart
-
-# Core ML (existing dependencies)
-pandas
-numpy
-scikit-learn
-xgboost
-lightgbm
-joblib
-shap
-
-# Utilities
-python-dotenv
+fastapi==0.115.0
+mangum==0.17.0
+python-multipart==0.0.9
+pandas==2.2.2
+numpy==2.0.1
+scikit-learn==1.5.1
+joblib==1.4.2
