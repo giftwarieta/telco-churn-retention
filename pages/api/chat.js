@@ -49,7 +49,7 @@ const CUSTOMER_COUNT_PATTERN = /\b(total count of customers|customer count|numbe
 const DATASET_OVERVIEW_PATTERN = /\b(about the data|about this dataset|dataset overview|describe the data|describe the dataset|summarise the data|summarize the data|what data is available)\b/i;
 const DATASET_INSIGHTS_PATTERN = /\b(top insights|key insights|insights from the data|what stands out|patterns in the data|findings from the data|data insights)\b/i;
 const COLUMNS_PATTERN = /\b(columns|fields|features|schema|variables)\b/i;
-const VISUAL_REQUEST_PATTERN = /\b(chart|graph|plot|visual|table|pie chart|bar chart|column chart|decision tree|tree diagram)\b/i;
+const VISUAL_REQUEST_PATTERN = /\b(chart|graph|plot|visual|table|pie chart|bar chart|column chart|line chart|donut chart|decision tree|tree diagram)\b/i;
 
 const SERVICE_UNAVAILABLE_MESSAGE =
   'I am sorry, but I am having difficulty providing a reliable response right now. Please contact the administrator of this website or try again in a little while.';
@@ -290,8 +290,10 @@ function getRequestedVisualTypes(message = '') {
 
   if (/\btable\b/i.test(normalized)) visualTypes.push('table');
   if (/\bpie chart|\bpie\b/i.test(normalized)) visualTypes.push('pie');
+  if (/\bdonut chart|\bdoughnut chart|\bdonut\b|\bdoughnut\b/i.test(normalized)) visualTypes.push('donut');
   if (/\bbar chart|\bbar graph|\bbar\b/i.test(normalized)) visualTypes.push('bar');
   if (/\bcolumn chart|\bcolumn\b/i.test(normalized)) visualTypes.push('column');
+  if (/\bline chart|\bline graph|\bline\b/i.test(normalized)) visualTypes.push('line');
   if (/\bdecision tree|\btree diagram|\bdecision path\b/i.test(normalized)) visualTypes.push('decision_tree');
   if (visualTypes.length === 0 && VISUAL_REQUEST_PATTERN.test(normalized)) visualTypes.push('bar');
 
@@ -341,6 +343,35 @@ function buildNumericVisual(item, type = 'column') {
       { label: 'Max', value: item.max },
     ],
   };
+}
+
+function buildLineVisual(item) {
+  if (item?.topValues?.length) {
+    return {
+      type: 'line',
+      title: `${item.column} Trend View`,
+      description: `A line view of the main ${item.column} categories in the active dataset.`,
+      data: item.topValues.map((entry) => ({
+        label: entry.value,
+        value: entry.count,
+      })),
+    };
+  }
+
+  if (item) {
+    return {
+      type: 'line',
+      title: `${item.column} Summary Trend`,
+      description: `A line view of summary statistics for ${item.column}.`,
+      data: [
+        { label: 'Min', value: item.min },
+        { label: 'Mean', value: item.mean },
+        { label: 'Max', value: item.max },
+      ],
+    };
+  }
+
+  return null;
 }
 
 function buildColumnTable(item) {
@@ -595,17 +626,25 @@ function buildDataVisualResponse(messages, context = {}) {
     }
 
     if (categoricalItem) {
+      if (visualType === 'line') {
+        visuals.push(buildLineVisual(categoricalItem));
+        return;
+      }
       visuals.push(buildCategoricalVisual(categoricalItem, visualType === 'column' ? 'column' : visualType));
       return;
     }
 
     if (numericItem) {
+      if (visualType === 'line') {
+        visuals.push(buildLineVisual(numericItem));
+        return;
+      }
       visuals.push(buildNumericVisual(numericItem, visualType === 'bar' ? 'bar' : 'column'));
       return;
     }
 
     if (dataProfile.target) {
-      visuals.push(buildChurnDistributionVisual(dataProfile, visualType === 'bar' ? 'bar' : visualType));
+      visuals.push(buildChurnDistributionVisual(dataProfile, visualType === 'bar' ? 'bar' : visualType === 'donut' ? 'donut' : visualType === 'line' ? 'line' : visualType));
     }
   });
 
@@ -694,9 +733,10 @@ Operational mandates & Scope:
 
 Formatting & Visual Capabilities (CRITICAL):
 - The frontend supports prose plus structured visuals.
-- If the user asks for a chart, graph, table, pie chart, bar chart, column chart, or decision tree, and enough context is available, return valid JSON only in this exact shape:
-- {"reply":"short explanation","visuals":[{"type":"pie|bar|column|table|decision_tree","title":"...","description":"optional","data":[{"label":"...","value":10}],"columns":["..."],"rows":[["..."]],"tree":{"label":"...","children":[{"label":"..."}]}}]}
+- If the user asks for a chart, graph, table, pie chart, donut chart, bar chart, column chart, line chart, or decision tree, and enough context is available, return valid JSON only in this exact shape:
+- {"reply":"short explanation","visuals":[{"type":"pie|donut|bar|column|line|table|decision_tree","title":"...","description":"optional","data":[{"label":"...","value":10}],"columns":["..."],"rows":[["..."]],"tree":{"label":"...","children":[{"label":"..."}]}}]}
 - Graphs & Charts: DO NOT use Mermaid code blocks. Instead, represent graphs visually using text-based emoji bar charts (e.g., [🟩🟩🟩🟩⬜⬜⬜] 40%) or simple text-based visual distributions to show proportions.
+- Use \`pie\`, \`donut\`, \`bar\`, \`column\`, or \`line\` for real charts rendered by the frontend.
 - Use \`table\` for metric matrices, category breakdowns, or field summaries.
 - Use \`decision_tree\` for decision logic, triage flow, or retention playbooks.
 - If no visual is needed, return normal text only, not JSON.
@@ -812,7 +852,7 @@ function buildSafeFallbackReply(messages, context = {}) {
   }
 
   if (CHART_PATTERN.test(normalized)) {
-    return `I can structure that visually. Ask for a pie chart, bar chart, column chart, decision tree, or table, and I will generate it from the active data when the required values are available.`;
+    return `I can structure that visually. Ask for a pie chart, donut chart, bar chart, column chart, line chart, decision tree, or table, and I will generate it from the active data when the required values are available.`;
   }
 
   if (/\broi|payback|arpu|clv|revenue|cost\b/i.test(normalized)) {
