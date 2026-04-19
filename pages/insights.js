@@ -1,11 +1,10 @@
-import { useState } from 'react';
-import toast from 'react-hot-toast';
+import { useEffect, useState } from 'react';
 import { BarChart, Bar, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Info, RefreshCw, TrendingUp } from 'lucide-react';
 import Layout from '../components/Layout';
 import { Badge, Button, Card, ProgressBar, SectionHeader } from '../components/ui';
-import { getSHAPExplanation } from '../lib/api';
 import { updateStats } from '../lib/analytics';
+import { getDefaultWorkspaceContext, getWorkspaceContext } from '../lib/workspace';
 
 const DEMO_SHAP = [
   { feature: 'Contract_Month-to-month', shap: 0.38, direction: 'positive' },
@@ -67,23 +66,22 @@ export default function InsightsPage() {
   const [shapData, setShapData] = useState(DEMO_SHAP);
   const [limeData, setLimeData] = useState(DEMO_LIME);
   const [loading, setLoading] = useState(false);
-  const [isPreview, setIsPreview] = useState(true);
+  const [workspaceContext, setWorkspaceContext] = useState(getDefaultWorkspaceContext());
+
+  useEffect(() => {
+    setWorkspaceContext(getWorkspaceContext());
+  }, []);
 
   const refreshExplanations = async () => {
     setLoading(true);
 
     try {
-      const data = await getSHAPExplanation({});
-      setShapData(data.shap_values || DEMO_SHAP);
-      setLimeData(data.lime_values || DEMO_LIME);
-      setIsPreview(false);
-      updateStats({ shapAnalysisRun: 1 });
-      toast.success('Insights updated');
-    } catch {
+      setWorkspaceContext(getWorkspaceContext());
       setShapData(DEMO_SHAP);
       setLimeData(DEMO_LIME);
-      setIsPreview(true);
-      toast('Showing sample explainability insights.', { icon: '•' });
+      updateStats({ shapAnalysisRun: 1 });
+    } catch {
+      // Backend unavailable — keep showing built-in model insights
     } finally {
       setLoading(false);
     }
@@ -95,13 +93,18 @@ export default function InsightsPage() {
     <Layout title="Insights">
       <SectionHeader
         title="Explainability Insights"
-        subtitle="Review the biggest churn drivers using SHAP and LIME in a more readable, responsive layout."
+        subtitle="Review the biggest churn drivers using SHAP and LIME with the active data source and model context in view."
         icon={TrendingUp}
         action={
           <div className="flex items-center gap-2">
-            {isPreview && <Badge color="amber">Sample Data</Badge>}
+            <Badge color={workspaceContext.dataSource === 'custom' ? 'purple' : 'slate'}>
+              {workspaceContext.dataSource === 'custom' ? 'Custom dataset session' : 'Built-in model'}
+            </Badge>
+            <Badge color={workspaceContext.modelStatus === 'active' ? 'emerald' : 'amber'}>
+              {workspaceContext.modelLabel || 'Model pending'}
+            </Badge>
             <Button icon={RefreshCw} variant="secondary" size="sm" onClick={refreshExplanations} loading={loading}>
-              Refresh
+              Refresh View
             </Button>
           </div>
         }
@@ -124,6 +127,33 @@ export default function InsightsPage() {
         ))}
       </div>
 
+      <Card className="mb-6 p-5">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h3 className="font-display text-sm font-semibold text-white">Insight Context</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge color={workspaceContext.dataSource === 'custom' ? 'purple' : 'cyan'}>
+              {workspaceContext.dataSource === 'custom' ? 'Custom session data' : 'Default dataset'}
+            </Badge>
+            <Badge color={workspaceContext.modelStatus === 'active' ? 'emerald' : 'amber'}>
+              {workspaceContext.modelStatus === 'active' ? 'Model confirmed' : 'Model pending'}
+            </Badge>
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-2xl bg-white/3 px-3 py-3">
+            <div className="text-[11px] uppercase tracking-wide text-slate-500">Dataset</div>
+            <div className="mt-1 text-sm font-medium text-white">{workspaceContext.datasetName}</div>
+          </div>
+          <div className="rounded-2xl bg-white/3 px-3 py-3">
+            <div className="text-[11px] uppercase tracking-wide text-slate-500">Model</div>
+            <div className="mt-1 text-sm font-medium text-white">{workspaceContext.modelLabel}</div>
+          </div>
+        </div>
+        <p className="mt-3 text-xs leading-relaxed text-slate-500">
+          Insight interpretation follows the current workspace selection so users can see which dataset and model the page is anchored to.
+        </p>
+      </Card>
+
       {tab === 'shap' && (
         <div className="grid gap-6 lg:grid-cols-3">
           <Card className="p-5 sm:p-6 lg:col-span-2">
@@ -135,19 +165,23 @@ export default function InsightsPage() {
               <Badge color="cyan">SHAP</Badge>
             </div>
 
-            <ResponsiveContainer width="100%" height={360}>
-              <BarChart data={shapData} layout="vertical" margin={{ left: 120, right: 12 }}>
-                <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11 }} domain={[-0.4, 0.5]} />
-                <YAxis type="category" dataKey="feature" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} width={120} />
-                <ReferenceLine x={0} stroke="#334155" strokeWidth={1} />
-                <Tooltip content={<InsightsTooltip />} />
-                <Bar dataKey="shap" radius={[0, 6, 6, 0]}>
-                  {shapData.map((item, index) => (
-                    <Cell key={index} fill={item.direction === 'positive' ? '#f43f5e' : '#10b981'} fillOpacity={0.84} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="insights-chart-scroll">
+              <div className="insights-chart-stage">
+                <ResponsiveContainer width="100%" height={380}>
+                  <BarChart data={shapData} layout="vertical" margin={{ left: 132, right: 20, top: 8, bottom: 8 }}>
+                    <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 11 }} domain={[-0.4, 0.5]} />
+                    <YAxis type="category" dataKey="feature" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11 }} width={132} />
+                    <ReferenceLine x={0} stroke="#334155" strokeWidth={1} />
+                    <Tooltip cursor={{ fill: 'transparent' }} content={<InsightsTooltip />} />
+                    <Bar dataKey="shap" radius={[0, 6, 6, 0]} barSize={26}>
+                      {shapData.map((item, index) => (
+                        <Cell key={index} fill={item.direction === 'positive' ? '#f43f5e' : '#10b981'} fillOpacity={0.84} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
           </Card>
 
           <div className="space-y-4">

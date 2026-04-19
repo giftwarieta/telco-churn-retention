@@ -1,75 +1,76 @@
-# ChurnAI Pro v1 — Next.js + FastAPI
+# ChurnAI Pro v1 - Next.js + Vercel Python
 
 Telco churn prediction platform rebuilt from Streamlit to Next.js for Vercel deployment.
-Maintains full compatibility with existing `src/` Python codebase.
+It keeps the existing `src/` processing logic and now ships a built-in Python backend for Vercel under `api/backend.py`.
 
 ## Architecture
 
-```
-Frontend (Next.js → Vercel)
-  pages/          → Route pages
-  components/     → Layout, UI components
-  lib/            → API client, analytics
-  styles/         → Global CSS + design tokens
+```text
+Frontend (Next.js -> Vercel)
+  pages/          -> Route pages
+  components/     -> Layout, UI components
+  lib/            -> API client, analytics
+  styles/         -> Global CSS + design tokens
 
-Backend (FastAPI → Railway/Render)
-  backend/app.py  → Drop-in replacement for Streamlit app.py
-  src/            → Unchanged — processor, model, business_impact
-  models/         → Trained model .pkl files
-  data/           → CSV datasets
+Backend (Vercel Python Function)
+  api/backend.py  -> FastAPI app served at /api/backend/*
+  src/            -> Reused preprocessing helpers
+  models/         -> Pretrained model artifacts deployed with the app
+  data/           -> Optional datasets for offline retraining only
 ```
 
 ## Quick Start
 
 ### Frontend
+
 ```bash
-cd telco-churn-app   # (root of this project)
 npm install
-cp .env.example .env.local
-npm run dev          # → http://localhost:3000
+npm run dev
 ```
 
-### Backend
+### Optional local backend
+
+Use this only if you want local development to hit a separate Python process on `http://localhost:8000`.
+
 ```bash
-# From your project root (where src/ lives)
 pip install -r backend/requirements.txt
-cp backend/app.py app_fastapi.py   # Keep original app.py (Streamlit)
 uvicorn app_fastapi:app --reload --port 8000
 ```
 
 ## Deploying to Vercel
 
-1. Push to GitHub
-2. Import repo in Vercel
-3. Set env variable: `NEXT_PUBLIC_API_URL=https://your-api.railway.app`
-4. Deploy ✓
+1. Push the repo to GitHub.
+2. Import the project into Vercel.
+3. Leave `NEXT_PUBLIC_API_URL` unset if you want to use the built-in Python backend.
+4. Deploy.
 
-## Deploying Backend to Railway
+The frontend will call `/api/backend` automatically on Vercel.
 
-1. Push the project root (with `backend/app.py` copied to `app.py`)
-2. Set start command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
-3. Copy Railway URL → set as `NEXT_PUBLIC_API_URL` in Vercel
+## Serverless model strategy
+
+- Prediction, batch scoring, explainability, metrics, ROI, and health run inside `api/backend.py`.
+- Model loading is lazy and cached per warm function instance.
+- Custom-data training now runs as an evaluation flow from the uploaded session CSV and returns model metrics plus confusion-matrix output to the UI.
+- Session training is not persisted as a deployed model artifact. To replace the production model, retrain offline and redeploy refreshed files in `models/`.
 
 ## Pages
 
-| Route         | Description                              |
-|---------------|------------------------------------------|
-| `/`           | Dashboard overview with charts           |
-| `/predict`    | Single + batch prediction (CSV upload)   |
-| `/insights`   | SHAP force plots + LIME explanations     |
-| `/consultant` | AI chat powered by Mistral (free)        |
-| `/roi`        | Business ROI & revenue impact calculator |
-| `/train`      | Retrain model with custom dataset        |
-| `/stats`      | App usage statistics (localStorage)     |
+| Route | Description |
+| --- | --- |
+| `/` | Dashboard overview with charts |
+| `/predict` | Single and batch prediction |
+| `/insights` | Explainability insights |
+| `/consultant` | AI consultant chat |
+| `/roi` | Business ROI and retention impact calculator |
+| `/train` | Training summary UI with serverless-safe fallback |
+| `/stats` | App usage statistics |
 
 ## AI Consultant
 
-Uses **Pollinations.ai** — completely free, no API key required.
-Model: Mistral 7B · Context: Telecom churn analytics expert
+The consultant now calls Groq through `pages/api/chat.js`. Configure `GROQ_API_KEY` and, if needed, `GROQ_ENDPOINT` in your Vercel project or local `.env.local`. You can also optionally override the default model with `GROQ_MODEL`. Backend or connection failures are filtered so end users only see a simple friendly support message.
 
 ## Design System
 
-- **Theme**: Dark navy glassmorphism with cyan accent
-- **Fonts**: Syne (display) + DM Sans (body) + JetBrains Mono (code)  
-- **Colors**: `--cyan: #06B6D4` · `--bg-base: #040812`
-- **Mobile**: Fully responsive with collapsible sidebar
+- Adaptive light and dark theme
+- Mobile-first responsive layout with bottom navigation and a More modal
+- Modern dashboard styling with expressive typography and layered surfaces

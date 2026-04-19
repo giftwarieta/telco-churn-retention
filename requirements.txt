@@ -1,27 +1,8 @@
-# --- Core Data Science & ML ---
-pandas
-numpy
-scikit-learn
-joblib
-
-# --- Explainability & Visualization ---
-shap
-matplotlib
-seaborn
-
-# --- Web Application Framework ---
-streamlit
-
-# --- AI Strategy Consultant (LLMs) ---
-google-generativeai
-openai
-
-
-# --- Additional Utilities ---
-requests
-python-dateutil
-beautifulsoup4
-pillow
-streamlit-option-menu
-st-social-media-links
-streamlit-extras
+fastapi==0.115.0
+mangum==0.17.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+pandas==2.2.2
+numpy==2.0.1
+scikit-learn==1.5.1
+joblib==1.4.2

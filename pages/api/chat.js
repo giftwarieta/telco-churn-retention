@@ -1,74 +1,937 @@
-// pages/api/chat.js - AI Consultant endpoint
-
-const BLOCKED_REPLY_PATTERNS = [
-  'important notice',
-  'legacy text api',
-  'this service has been deprecated',
-  'enter.pollinations.ai',
-  'anonymous requests to text.pollinations.ai',
-  'authenticated users',
-  'api key required',
-  'login and token management have been disabled',
-  '<!doctype html',
-  '<html',
-  'traceback',
-  'internal server error',
-  'service unavailable',
-  'nginx',
-  'cloudflare',
-];
+import { formatDataProfileForPrompt } from '../../lib/data-profile';
 
 const TERM_DEFINITIONS = {
   arpu: {
     full: 'Average Revenue Per User',
     explanation: 'ARPU measures the average revenue earned from each customer or subscriber over a specific period, usually monthly.',
-    whyItMatters: 'In telecom, ARPU helps you understand customer value, compare segments, and estimate how much revenue is at risk when customers churn.',
     formula: 'ARPU = total revenue in a period / total active users in that period',
-    usage: 'If ARPU is high for a segment, retaining those customers usually has a bigger revenue impact.',
   },
   clv: {
     full: 'Customer Lifetime Value',
-    explanation: 'CLV estimates the total value a customer is expected to generate over the full relationship with the business.',
-    whyItMatters: 'It helps you decide how much retention spend is justified for a given customer segment.',
-    formula: 'A simple view is CLV = average monthly value x expected customer lifespan',
-    usage: 'High-CLV customers can justify more proactive save offers or service interventions.',
+    explanation: 'CLV estimates the total revenue a customer is expected to generate over the full relationship with the business.',
+    formula: 'CLV = average monthly value x expected customer lifespan in months',
   },
   nps: {
     full: 'Net Promoter Score',
-    explanation: 'NPS measures customer loyalty by asking how likely customers are to recommend your company.',
-    whyItMatters: 'It is useful as an early signal of satisfaction problems that can later turn into churn.',
+    explanation: 'NPS measures customer loyalty by tracking how likely customers are to recommend the company.',
     formula: 'NPS = % promoters - % detractors',
-    usage: 'A falling NPS in a telecom segment can point to service, billing, or support issues before churn spikes.',
   },
   roi: {
     full: 'Return on Investment',
-    explanation: 'ROI shows whether the financial return from an action is worth the cost of that action.',
-    whyItMatters: 'In retention, it helps you judge whether a campaign protects enough revenue to justify incentives, discounts, or service costs.',
-    formula: 'ROI = (return - cost) / cost',
-    usage: 'Use ROI to compare retention campaigns across segments or offer types.',
+    explanation: 'ROI measures whether the financial return from a retention action is worth the cost.',
+    formula: 'ROI = (return - cost) / cost x 100%',
   },
   shap: {
     full: 'SHapley Additive exPlanations',
-    explanation: 'SHAP explains how each feature pushes a prediction up or down compared with the model baseline.',
-    whyItMatters: 'It turns a churn score into a business story you can act on.',
-    formula: 'There is no simple business formula; it is an explainability method based on contribution values.',
-    usage: 'If contract type has a strong positive SHAP value, it means that feature is increasing churn risk for that prediction.',
+    explanation: 'SHAP explains how each feature pushes a churn prediction up or down relative to the model baseline.',
+    formula: 'No single business formula. It returns per-feature contribution values.',
   },
   lime: {
     full: 'Local Interpretable Model-agnostic Explanations',
-    explanation: 'LIME explains a single prediction by approximating the model locally around that customer or case.',
-    whyItMatters: 'It helps you understand why one specific customer was scored as high or low risk.',
-    formula: 'There is no single business formula; it is a local explanation technique.',
-    usage: 'Use LIME when you want to explain one customer decision in plain language.',
+    explanation: 'LIME explains one specific prediction by approximating the model locally around that case.',
+    formula: 'Local approximation around a single prediction, not a global business formula.',
   },
   churn: {
     full: 'Customer Churn',
-    explanation: 'Churn means customers leaving the service, canceling, or becoming inactive.',
-    whyItMatters: 'It directly affects recurring revenue, growth efficiency, and customer acquisition payback.',
-    formula: 'Churn rate = customers lost during a period / customers at the start of the period',
-    usage: 'A rising churn rate is usually a sign of pricing, service quality, contract, or support issues.',
+    explanation: 'Churn means customers leaving, cancelling, or becoming inactive.',
+    formula: 'Churn rate = customers lost in a period / customers at the start of the period x 100%',
   },
 };
+
+const GREETING_PATTERN = /^(hi|hello|hey|good morning|good afternoon|good evening)[.!? ]*$/i;
+const GRATITUDE_PATTERN = /^(thanks|thank you|thankyou|thx|great|nice|perfect|okay|ok|got it|understood|makes sense)[.!? ]*$/i;
+const FAREWELL_PATTERN = /^(bye|goodbye|see you|exit|quit|thanks,? bye|thank you,? bye)[.!? ]*$/i;
+const CLOSE_SESSION_PATTERN = /^(no|nope|that's all|that is all|nothing else|all good|all set|no thanks|no thank you)[.!? ]*$/i;
+const DEFINITION_PATTERN = /\b(what is|what does .* mean|define|definition|meaning|full meaning|expand|stand for)\b/i;
+const CHART_PATTERN = /\b(chart|graph|plot|table|visual|diagram|mermaid)\b/i;
+const VALUE_REQUEST_PATTERN = /\b(give me values?|show me values?|what are the values?|numbers please|show the numbers)\b/i;
+const CUSTOMER_COUNT_PATTERN = /\b(total count of customers|customer count|number of customers|how many customers|total customers|customer total)\b/i;
+const DATASET_OVERVIEW_PATTERN = /\b(about the data|about this dataset|dataset overview|describe the data|describe the dataset|summarise the data|summarize the data|what data is available)\b/i;
+const DATASET_INSIGHTS_PATTERN = /\b(top insights|key insights|insights from the data|what stands out|patterns in the data|findings from the data|data insights)\b/i;
+const COLUMNS_PATTERN = /\b(columns|fields|features|schema|variables)\b/i;
+const VISUAL_REQUEST_PATTERN = /\b(chart|graph|plot|visual|table|pie chart|bar chart|column chart|decision tree|tree diagram)\b/i;
+
+const SERVICE_UNAVAILABLE_MESSAGE =
+  'I am sorry, but I am having difficulty providing a reliable response right now. Please contact the administrator of this website or try again in a little while.';
+const DEFAULT_GROQ_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
+const DEFAULT_GROQ_MODEL = 'llama-3.3-70b-versatile';
+
+function getLatestUserMessage(messages) {
+  return [...messages].reverse().find((message) => message.role === 'user')?.content?.trim() || '';
+}
+
+function getPreviousUserMessage(messages) {
+  const users = messages.filter((message) => message.role === 'user');
+  return users.length > 1 ? users[users.length - 2].content?.trim() || '' : '';
+}
+
+function getLastAssistantMessage(messages) {
+  return [...messages].reverse().find((message) => message.role === 'assistant')?.content?.trim() || '';
+}
+
+function extractKnownTerm(text = '') {
+  return Object.keys(TERM_DEFINITIONS).find((term) => new RegExp(`\\b${term}\\b`, 'i').test(text)) || '';
+}
+
+function getConsultantIdentity(context = {}) {
+  const providedUserName = context?.profile?.userName?.trim?.();
+  const providedCompanyName = context?.profile?.companyName?.trim?.();
+
+  return {
+    userName: providedUserName || 'there',
+    companyName:
+      providedCompanyName ||
+      (context?.workspace?.dataSource === 'custom' ? 'your organisation' : 'your telecom business'),
+  };
+}
+
+function buildThanksReply(context = {}) {
+  const { userName, companyName } = getConsultantIdentity(context);
+  return `You are very welcome, ${userName}. Are there any other specific areas within ${companyName} or further assistance you require at this time?`;
+}
+
+function buildClosingReply(context = {}) {
+  const { userName, companyName } = getConsultantIdentity(context);
+  return `It was a pleasure assisting you today, ${userName}. Wishing ${companyName} continued success in your customer retention efforts. Goodbye!`;
+}
+
+function buildFarewellReply(context = {}) {
+  const { userName, companyName } = getConsultantIdentity(context);
+  return `Goodbye, ${userName}. Feel free to reach out anytime for further assistance with ${companyName}'s churn strategies.`;
+}
+
+function buildGreetingReply(context = {}) {
+  const { userName, companyName } = getConsultantIdentity(context);
+  return `Hello ${userName}. I am your telecom strategy consultant for ${companyName}. I can help with churn diagnosis, retention strategy, ROI, ARPU, pricing, customer value management, and explainability. What would you like to work on?`;
+}
+
+function buildDefinitionAnswer(term, context = {}) {
+  const info = TERM_DEFINITIONS[term];
+  if (!info) return null;
+
+  const { companyName } = getConsultantIdentity(context);
+  return `**${term.toUpperCase()}** means **${info.full}**.
+
+${info.explanation}
+
+**Formula:** ${info.formula}
+
+**Why it matters for ${companyName}:** it helps connect customer behavior to revenue, churn risk, and retention decision-making.`;
+}
+
+function getKnownCustomerCount(context = {}) {
+  const count = context?.workspace?.customerCount;
+  return typeof count === 'number' && count > 0 ? count : null;
+}
+
+function buildCustomerCountAnswer(context = {}) {
+  const count = getKnownCustomerCount(context);
+  const { companyName } = getConsultantIdentity(context);
+
+  if (count) {
+    return `The current workspace shows **${count.toLocaleString()} customers** for ${companyName}.`;
+  }
+
+  return `I do not have a confirmed customer count in the current context yet. To give the exact total, I need the active dataset row count.`;
+}
+
+function buildValueRequestAnswer(term, context = {}) {
+  if (term === 'churn') {
+    return `To calculate **churn rate**, I need these values:
+
+- **Customers lost in the period**
+- **Customers at the start of the period**
+
+**Formula:** churn rate = customers lost in the period / customers at the start of the period x 100%
+
+If you share those two numbers, I can calculate it for you immediately.`;
+  }
+
+  if (term === 'arpu') {
+    return `To calculate **ARPU**, I need:
+
+- **Total revenue for the period**
+- **Total active users in the same period**
+
+**Formula:** ARPU = total revenue / total active users`;
+  }
+
+  if (term === 'clv') {
+    return `To calculate **CLV**, I need:
+
+- **Average monthly value or ARPU**
+- **Expected customer lifespan**
+- Optionally, **gross margin** if you want a more rigorous estimate`;
+  }
+
+  if (term === 'roi') {
+    return `To provide an accurate ROI calculation, I require:
+
+- **Target customer count**
+- **Expected save rate**
+- **Campaign cost**
+- **Average monthly value or ARPU**
+- Optionally, **expected retention duration after save**`;
+  }
+
+  return null;
+}
+
+function buildContextualFollowUpAnswer(messages, context = {}) {
+  const latest = getLatestUserMessage(messages);
+  const previousUser = getPreviousUserMessage(messages);
+  const previousAssistant = getLastAssistantMessage(messages);
+  const normalized = latest.toLowerCase().trim();
+  const activeTerm =
+    extractKnownTerm(latest) ||
+    extractKnownTerm(previousUser) ||
+    extractKnownTerm(previousAssistant);
+
+  if (CUSTOMER_COUNT_PATTERN.test(normalized)) {
+    return buildCustomerCountAnswer(context);
+  }
+
+  if (VALUE_REQUEST_PATTERN.test(normalized) || /\bvalues?\b/i.test(normalized)) {
+    if (activeTerm) {
+      return buildValueRequestAnswer(activeTerm, context);
+    }
+  }
+
+  if (/^(give example|example please|show example|can you calculate it|calculate it)\b/i.test(normalized)) {
+    if (activeTerm === 'churn') {
+      return `Here is a simple churn example:
+
+- Customers at the start of the period: **10,000**
+- Customers lost in the period: **450**
+
+**Churn rate = 450 / 10,000 x 100 = 4.5%**`;
+    }
+  }
+
+  return null;
+}
+
+function buildSessionSummary(context = {}) {
+  const { sessionStats, riskBreakdown, recentPredictions, workspace, dataProfile } = context;
+  const lines = [];
+
+  if (sessionStats) {
+    const {
+      totalPredictions = 0,
+      totalRecordsAnalyzed = 0,
+      batchFilesProcessed = 0,
+      totalConsultations = 0,
+      roiCalculations = 0,
+      shapAnalysisRun = 0,
+    } = sessionStats;
+
+    if (totalPredictions > 0) lines.push(`- Total predictions run: ${totalPredictions}`);
+    if (totalRecordsAnalyzed > 0) lines.push(`- Total records analysed: ${totalRecordsAnalyzed}`);
+    if (batchFilesProcessed > 0) lines.push(`- Batch files processed: ${batchFilesProcessed}`);
+    if (totalConsultations > 0) lines.push(`- Previous consultations in this session: ${totalConsultations}`);
+    if (roiCalculations > 0) lines.push(`- ROI calculations completed: ${roiCalculations}`);
+    if (shapAnalysisRun > 0) lines.push(`- Explainability analyses completed: ${shapAnalysisRun}`);
+  }
+
+  if (riskBreakdown?.total > 0) {
+    const { high = 0, medium = 0, low = 0, total = 0 } = riskBreakdown;
+    lines.push(
+      `- Risk breakdown: ${high} high risk (${((high / total) * 100).toFixed(0)}%), ${medium} medium risk (${((medium / total) * 100).toFixed(0)}%), ${low} low risk`
+    );
+  }
+
+  if (recentPredictions?.length) {
+    lines.push(
+      `- Recent prediction trail: ${recentPredictions
+        .map((item) => `${item.risk || 'unknown'} risk${item.preview ? ` (${item.preview})` : ''}`)
+        .join(', ')}`
+    );
+  }
+
+  if (workspace) {
+    if (workspace.dataSource) lines.push(`- Active data source: ${workspace.dataSource}`);
+    if (workspace.datasetName) lines.push(`- Active dataset: ${workspace.datasetName}`);
+    if (workspace.datasetScope) lines.push(`- Dataset persistence: ${workspace.datasetScope}`);
+    if (workspace.modelLabel) {
+      lines.push(`- Selected model: ${workspace.modelLabel}${workspace.modelStatus ? ` (${workspace.modelStatus})` : ''}`);
+    }
+  }
+
+  if (dataProfile?.rowCount) {
+    lines.push(`- Active data summary available with ${dataProfile.rowCount} rows and ${dataProfile.columnCount} columns`);
+    if (dataProfile?.target?.positiveRate !== undefined && dataProfile?.target?.positiveRate !== null) {
+      lines.push(`- Observed churn rate in active data: ${dataProfile.target.positiveRate}%`);
+    }
+  }
+
+  return lines.length ? lines.join('\n') : '- No structured session statistics are currently available.';
+}
+
+function getDataProfile(context = {}) {
+  const profile = context?.dataProfile;
+  return profile?.rowCount ? profile : null;
+}
+
+function normaliseLabel(value = '') {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function wrapReply(reply, visuals = []) {
+  return { reply, visuals };
+}
+
+function clampRows(rows = [], maxRows = 8) {
+  return rows.slice(0, maxRows);
+}
+
+function getRequestedVisualTypes(message = '') {
+  const normalized = message.toLowerCase();
+  const visualTypes = [];
+
+  if (/\btable\b/i.test(normalized)) visualTypes.push('table');
+  if (/\bpie chart|\bpie\b/i.test(normalized)) visualTypes.push('pie');
+  if (/\bbar chart|\bbar graph|\bbar\b/i.test(normalized)) visualTypes.push('bar');
+  if (/\bcolumn chart|\bcolumn\b/i.test(normalized)) visualTypes.push('column');
+  if (/\bdecision tree|\btree diagram|\bdecision path\b/i.test(normalized)) visualTypes.push('decision_tree');
+  if (visualTypes.length === 0 && VISUAL_REQUEST_PATTERN.test(normalized)) visualTypes.push('bar');
+
+  return Array.from(new Set(visualTypes));
+}
+
+function buildChurnDistributionVisual(dataProfile, type = 'pie') {
+  if (!dataProfile?.target) return null;
+
+  return {
+    type,
+    title: 'Churn Distribution',
+    description: 'Distribution of churn versus retained records in the active dataset.',
+    data: [
+      { label: 'Churn', value: dataProfile.target.positiveCount },
+      { label: 'Retained', value: dataProfile.target.negativeCount },
+    ],
+  };
+}
+
+function buildCategoricalVisual(item, type = 'bar') {
+  if (!item?.topValues?.length) return null;
+
+  return {
+    type,
+    title: `${item.column} Distribution`,
+    description: `Top categories for ${item.column} in the active dataset.`,
+    data: item.topValues.map((entry) => ({
+      label: entry.value,
+      value: entry.count,
+      share: entry.share,
+      churnRate: entry.positiveRate,
+    })),
+  };
+}
+
+function buildNumericVisual(item, type = 'column') {
+  if (!item) return null;
+
+  return {
+    type,
+    title: `${item.column} Summary`,
+    description: `Summary statistics for ${item.column}.`,
+    data: [
+      { label: 'Mean', value: item.mean },
+      { label: 'Min', value: item.min },
+      { label: 'Max', value: item.max },
+    ],
+  };
+}
+
+function buildColumnTable(item) {
+  if (!item) return null;
+
+  if (item.topValues) {
+    return {
+      type: 'table',
+      title: `${item.column} Breakdown`,
+      columns: ['Value', 'Count', 'Share %', 'Churn %'],
+      rows: clampRows(
+        item.topValues.map((entry) => [
+          entry.value,
+          String(entry.count),
+          entry.share != null ? String(entry.share) : '—',
+          entry.positiveRate != null ? String(entry.positiveRate) : '—',
+        ])
+      ),
+    };
+  }
+
+  return {
+    type: 'table',
+    title: `${item.column} Summary`,
+    columns: ['Metric', 'Value'],
+    rows: [
+      ['Mean', String(item.mean)],
+      ['Minimum', String(item.min)],
+      ['Maximum', String(item.max)],
+      ['Populated rows', String(item.count)],
+    ],
+  };
+}
+
+function buildColumnsTable(dataProfile) {
+  if (!dataProfile?.columns?.length) return null;
+
+  return {
+    type: 'table',
+    title: 'Available Columns',
+    columns: ['Column'],
+    rows: clampRows(dataProfile.columns.map((column) => [column]), 14),
+  };
+}
+
+function buildDecisionTreeVisual(context = {}) {
+  const companyName = getConsultantIdentity(context).companyName;
+
+  return {
+    type: 'decision_tree',
+    title: 'Retention Decision Tree',
+    description: `A simple decision path ${companyName} can use to triage at-risk customers.`,
+    tree: {
+      label: 'Customer enters churn review',
+      children: [
+        {
+          label: 'High churn probability?',
+          children: [
+            {
+              label: 'Yes',
+              children: [
+                { label: 'High value / ARPU?', children: [{ label: 'Offer save action + senior follow-up' }] },
+                { label: 'Low value?', children: [{ label: 'Low-cost retention or journey fix' }] },
+              ],
+            },
+            {
+              label: 'No',
+              children: [
+                { label: 'Service issue present?', children: [{ label: 'Route to service recovery' }] },
+                { label: 'No major issue', children: [{ label: 'Keep in monitor segment' }] },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function sanitizeVisuals(visuals = []) {
+  return (Array.isArray(visuals) ? visuals : [])
+    .filter((item) => item && typeof item === 'object' && typeof item.type === 'string')
+    .slice(0, 3);
+}
+
+function extractStructuredAssistantPayload(rawReply = '') {
+  const trimmed = String(rawReply || '').trim();
+  if (!trimmed) return null;
+
+  const direct = (() => {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  })();
+
+  const fromCodeFence = (() => {
+    const match = trimmed.match(/```json\s*([\s\S]*?)```/i);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[1]);
+    } catch {
+      return null;
+    }
+  })();
+
+  const parsed = direct || fromCodeFence;
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  if (typeof parsed.reply !== 'string') return null;
+
+  return {
+    reply: parsed.reply.trim(),
+    visuals: sanitizeVisuals(parsed.visuals),
+  };
+}
+
+function findSummaryColumn(dataProfile, message = '') {
+  const normalizedMessage = normaliseLabel(message);
+  const columns = [
+    ...(dataProfile?.numeric || []).map((item) => item.column),
+    ...(dataProfile?.categorical || []).map((item) => item.column),
+  ];
+
+  return columns.find((column) => {
+    const normalizedColumn = normaliseLabel(column);
+    return normalizedColumn && normalizedMessage.includes(normalizedColumn);
+  });
+}
+
+function buildDataOverviewAnswer(context = {}) {
+  const dataProfile = getDataProfile(context);
+  if (!dataProfile) return null;
+
+  const overviewLines = [
+    `The active dataset is **${dataProfile.datasetName}** with **${dataProfile.rowCount.toLocaleString()} rows** and **${dataProfile.columnCount.toLocaleString()} columns**.`,
+  ];
+
+  if (dataProfile.target) {
+    overviewLines.push(
+      `Observed churn rate is **${dataProfile.target.positiveRate}%** with **${dataProfile.target.positiveCount.toLocaleString()} churn records**.`
+    );
+  }
+
+  if (dataProfile.columns?.length) {
+    overviewLines.push(`Key columns include: ${dataProfile.columns.slice(0, 12).join(', ')}.`);
+  }
+
+  if (dataProfile.insights?.length) {
+    overviewLines.push(`Top data insight: ${dataProfile.insights[0]}`);
+  }
+
+  return overviewLines.join('\n\n');
+}
+
+function buildDataInsightsAnswer(context = {}) {
+  const dataProfile = getDataProfile(context);
+  if (!dataProfile?.insights?.length) return null;
+
+  return `Here are the strongest visible insights from the active data:
+
+${dataProfile.insights.map((item) => `- ${item}`).join('\n')}`;
+}
+
+function buildColumnsAnswer(context = {}) {
+  const dataProfile = getDataProfile(context);
+  if (!dataProfile?.columns?.length) return null;
+
+  return `The active dataset has **${dataProfile.columnCount} columns**.
+
+Columns:
+- ${dataProfile.columns.join('\n- ')}`;
+}
+
+function buildColumnSpecificAnswer(column, context = {}) {
+  const dataProfile = getDataProfile(context);
+  if (!dataProfile || !column) return null;
+
+  const numericItem = (dataProfile.numeric || []).find((item) => item.column === column);
+  if (numericItem) {
+    return `For **${column}** in the active data:
+
+- Mean: **${numericItem.mean}**
+- Minimum: **${numericItem.min}**
+- Maximum: **${numericItem.max}**
+- Populated rows: **${numericItem.count.toLocaleString()}**`;
+  }
+
+  const categoricalItem = (dataProfile.categorical || []).find((item) => item.column === column);
+  if (categoricalItem) {
+    return `For **${column}** in the active data:
+
+${categoricalItem.topValues
+  .map((item) =>
+    typeof item.positiveRate === 'number'
+      ? `- ${item.value}: ${item.count.toLocaleString()} records (${item.share}%), churn ${item.positiveRate}%`
+      : `- ${item.value}: ${item.count.toLocaleString()} records (${item.share}%)`
+  )
+  .join('\n')}`;
+  }
+
+  return null;
+}
+
+function buildDataVisualResponse(messages, context = {}) {
+  const latest = getLatestUserMessage(messages);
+  const normalized = latest.toLowerCase().trim();
+  const dataProfile = getDataProfile(context);
+
+  if (!dataProfile || !VISUAL_REQUEST_PATTERN.test(normalized)) return null;
+
+  const requestedVisuals = getRequestedVisualTypes(latest);
+  const matchedColumn = findSummaryColumn(dataProfile, latest);
+  const categoricalItem = matchedColumn ? (dataProfile.categorical || []).find((item) => item.column === matchedColumn) : null;
+  const numericItem = matchedColumn ? (dataProfile.numeric || []).find((item) => item.column === matchedColumn) : null;
+  const visuals = [];
+
+  requestedVisuals.forEach((visualType) => {
+    if (visualType === 'decision_tree') {
+      visuals.push(buildDecisionTreeVisual(context));
+      return;
+    }
+
+    if (visualType === 'table') {
+      if (COLUMNS_PATTERN.test(normalized)) {
+        visuals.push(buildColumnsTable(dataProfile));
+        return;
+      }
+
+      if (categoricalItem || numericItem) {
+        visuals.push(buildColumnTable(categoricalItem || numericItem));
+        return;
+      }
+
+      if (dataProfile.target) {
+        visuals.push({
+          type: 'table',
+          title: 'Churn Summary',
+          columns: ['Metric', 'Value'],
+          rows: [
+            ['Dataset', dataProfile.datasetName],
+            ['Rows', String(dataProfile.rowCount)],
+            ['Columns', String(dataProfile.columnCount)],
+            ['Churn rate %', String(dataProfile.target.positiveRate)],
+            ['Churn count', String(dataProfile.target.positiveCount)],
+            ['Retained count', String(dataProfile.target.negativeCount)],
+          ],
+        });
+      }
+      return;
+    }
+
+    if (categoricalItem) {
+      visuals.push(buildCategoricalVisual(categoricalItem, visualType === 'column' ? 'column' : visualType));
+      return;
+    }
+
+    if (numericItem) {
+      visuals.push(buildNumericVisual(numericItem, visualType === 'bar' ? 'bar' : 'column'));
+      return;
+    }
+
+    if (dataProfile.target) {
+      visuals.push(buildChurnDistributionVisual(dataProfile, visualType === 'bar' ? 'bar' : visualType));
+    }
+  });
+
+  const cleanVisuals = sanitizeVisuals(visuals).filter(Boolean);
+  if (!cleanVisuals.length) return null;
+
+  let reply = 'I prepared a visual view based on the active dataset.';
+  if (matchedColumn) {
+    reply = `I prepared a visual view for **${matchedColumn}** based on the active dataset.`;
+  } else if (dataProfile.target && /\bchurn\b/i.test(normalized)) {
+    reply = 'I prepared a visual summary of churn distribution in the active dataset.';
+  } else if (requestedVisuals.includes('decision_tree')) {
+    reply = 'I prepared a decision tree view you can use to guide retention actions.';
+  }
+
+  return wrapReply(reply, cleanVisuals);
+}
+
+function buildLocalPayload(messages, context = {}) {
+  const visualResponse = buildDataVisualResponse(messages, context);
+  if (visualResponse) return visualResponse;
+
+  const answer = getQuickLocalAnswer(messages, context);
+  return answer ? wrapReply(answer) : null;
+}
+
+function buildDataQuestionAnswer(messages, context = {}) {
+  const latest = getLatestUserMessage(messages);
+  const normalized = latest.toLowerCase().trim();
+  const dataProfile = getDataProfile(context);
+
+  if (!dataProfile) return null;
+
+  if (CUSTOMER_COUNT_PATTERN.test(normalized)) {
+    return `The active dataset currently contains **${dataProfile.rowCount.toLocaleString()} rows**.`;
+  }
+
+  if (DATASET_OVERVIEW_PATTERN.test(normalized)) {
+    return buildDataOverviewAnswer(context);
+  }
+
+  if (DATASET_INSIGHTS_PATTERN.test(normalized)) {
+    return buildDataInsightsAnswer(context);
+  }
+
+  if (COLUMNS_PATTERN.test(normalized) && /\bwhat|show|list|which|available|present|have\b/i.test(normalized)) {
+    return buildColumnsAnswer(context);
+  }
+
+  if (/\bchurn rate\b|\bchurn percentage\b|\bpercentage churn\b/i.test(normalized) && dataProfile.target) {
+    return `The observed churn rate in the active data is **${dataProfile.target.positiveRate}%**, based on **${dataProfile.target.positiveCount.toLocaleString()} churn records** out of **${dataProfile.rowCount.toLocaleString()} rows**.`;
+  }
+
+  const matchedColumn = findSummaryColumn(dataProfile, latest);
+  if (matchedColumn) {
+    const answer = buildColumnSpecificAnswer(matchedColumn, context);
+    if (answer) return answer;
+  }
+
+  return null;
+}
+
+function buildSystemPrompt(context = {}) {
+  const { userName, companyName } = getConsultantIdentity(context);
+  const statsSummary = buildSessionSummary(context);
+  const dataSummary = formatDataProfileForPrompt(context?.dataProfile);
+
+  return `You are an Expert Telecom Strategy Consultant assisting ${userName} from ${companyName}.
+
+Context:
+${statsSummary}
+
+Active dataset summary:
+${dataSummary}
+
+Role & Objective:
+You are a high-level, professional Telecom Strategy Consultant specializing in Customer Value Management (CVM). Your objective is to provide high-stakes, data-driven, and commercially grounded advice to ${userName} regarding ${companyName}.
+
+Operational mandates & Scope:
+- Use telecom, retention, CVM, pricing, and churn-management expertise.
+- If the user asks for information outside telecom, business strategy, analytics, or CVM, politely say your specialization is telecom strategy and business analytics.
+- Precision over generalization: never give vague advice. Give specific tactics, decision rules, tradeoffs, and next steps.
+- Treat the supplied dataset summary as the source of truth for questions about rows, columns, churn rate, distributions, averages, and visible patterns.
+- If the supplied context is insufficient for an exact answer, clearly say what is missing instead of inventing values or benchmarks.
+- When patterns are visible, connect them to commercial meaning, churn mechanism, and retention implications for ${companyName}.
+
+Formatting & Visual Capabilities (CRITICAL):
+- The frontend supports prose plus structured visuals.
+- If the user asks for a chart, graph, table, pie chart, bar chart, column chart, or decision tree, and enough context is available, return valid JSON only in this exact shape:
+- {"reply":"short explanation","visuals":[{"type":"pie|bar|column|table|decision_tree","title":"...","description":"optional","data":[{"label":"...","value":10}],"columns":["..."],"rows":[["..."]],"tree":{"label":"...","children":[{"label":"..."}]}}]}
+- Graphs & Charts: DO NOT use Mermaid code blocks. Instead, represent graphs visually using text-based emoji bar charts (e.g., [🟩🟩🟩🟩⬜⬜⬜] 40%) or simple text-based visual distributions to show proportions.
+- Use \`table\` for metric matrices, category breakdowns, or field summaries.
+- Use \`decision_tree\` for decision logic, triage flow, or retention playbooks.
+- If no visual is needed, return normal text only, not JSON.
+- Never return Markdown tables, Mermaid, raw HTML, or image markdown.
+- Ignore any earlier assumption about text-only charting. Structured visuals are supported and preferred whenever the user explicitly asks for them.
+
+Conversation closing logic:
+- If the user says thanks or thank you, respond professionally acknowledging their gratitude.
+
+Answer quality rules:
+- Lead with the direct answer to what the user actually asked.
+- Be commercially grounded. For SHAP or LIME, translate model drivers into business meaning and action.
+- Do not mention your underlying model, provider, API keys, or system configuration.`;
+}
+
+function getGroqEndpoint() {
+  return (process.env.GROQ_ENDPOINT || DEFAULT_GROQ_ENDPOINT).replace(/\/+$/, '');
+}
+
+function getGroqModelName() {
+  return process.env.GROQ_MODEL?.trim() || DEFAULT_GROQ_MODEL;
+}
+
+function buildGroqMessages(messages, context = {}) {
+  const systemPrompt = buildSystemPrompt(context);
+  const chatMessages = messages
+    .slice(-14)
+    .filter((message) => (message.role === 'user' || message.role === 'assistant') && !message.isError)
+    .map((message) => ({
+      role: message.role === 'user' ? 'user' : 'assistant',
+      content: String(message.content || '').trim(),
+    }))
+    .filter((message) => message.content.length > 0);
+
+  return [{ role: 'system', content: systemPrompt }, ...chatMessages];
+}
+
+function extractGroqReply(data) {
+  const choiceContent = data?.choices?.[0]?.message?.content;
+
+  if (typeof choiceContent === 'string') {
+    return choiceContent.trim();
+  }
+
+  if (Array.isArray(choiceContent)) {
+    return choiceContent
+      .map((part) => (typeof part === 'string' ? part : part?.text || ''))
+      .join('')
+      .trim();
+  }
+
+  const outputText = data?.output_text;
+  if (typeof outputText === 'string') {
+    return outputText.trim();
+  }
+
+  return '';
+}
+
+function looksLikeBadAssistantPayload(reply = '') {
+  const normalized = reply.toLowerCase();
+  return [
+    'api key',
+    'anthropic',
+    'pollinations',
+    'legacy text api',
+    'important notice',
+    'internal server error',
+    'traceback',
+    '<html',
+    '<!doctype html',
+    'error connecting to ai service',
+    'restart the dev server',
+    'configure',
+  ].some((pattern) => normalized.includes(pattern));
+}
+
+function buildSafeFallbackReply(messages, context = {}) {
+  const latest = getLatestUserMessage(messages);
+  const previousUser = getPreviousUserMessage(messages);
+  const lastAssistant = getLastAssistantMessage(messages);
+  const normalized = latest.toLowerCase().trim();
+
+  if (GREETING_PATTERN.test(normalized)) {
+    return buildGreetingReply(context);
+  }
+
+  if (FAREWELL_PATTERN.test(normalized)) {
+    return buildFarewellReply(context);
+  }
+
+  if (GRATITUDE_PATTERN.test(normalized)) {
+    return buildThanksReply(context);
+  }
+
+  if (CLOSE_SESSION_PATTERN.test(normalized) && /further assistance|specific areas|anything else/i.test(lastAssistant)) {
+    return buildClosingReply(context);
+  }
+
+  if (DEFINITION_PATTERN.test(normalized)) {
+    const term = extractKnownTerm(latest) || extractKnownTerm(previousUser);
+    if (term) return buildDefinitionAnswer(term, context);
+  }
+
+  const contextualFollowUp = buildContextualFollowUpAnswer(messages, context);
+  if (contextualFollowUp) {
+    return contextualFollowUp;
+  }
+
+  const dataAnswer = buildDataQuestionAnswer(messages, context);
+  if (dataAnswer) {
+    return dataAnswer;
+  }
+
+  if (CHART_PATTERN.test(normalized)) {
+    return `I can structure that visually. Ask for a pie chart, bar chart, column chart, decision tree, or table, and I will generate it from the active data when the required values are available.`;
+  }
+
+  if (/\broi|payback|arpu|clv|revenue|cost\b/i.test(normalized)) {
+    return `To provide an accurate ROI calculation, I require at least the target customer count, expected save rate, campaign cost, and average monthly value or ARPU.`;
+  }
+
+  if (/\bmonth-to-month\b/i.test(normalized) && /\bhigh churn risk\b/i.test(normalized)) {
+    return `For month-to-month customers showing high churn risk, prioritise three actions:
+
+1. Segment by value and tenure so ${getConsultantIdentity(context).companyName} protects the highest-value at-risk base first.
+2. Use targeted contract migration offers such as a price lock, bonus data, or premium support instead of broad discounts.
+3. Track save rate, contract conversion, ARPU retained, and 60/90-day post-save churn to confirm the intervention is durable.`;
+  }
+
+  if (/\bshap|lime|explain|model\b/i.test(normalized)) {
+    return `For explainability, the right approach is to convert model drivers into commercial actions. Share the feature or prediction pattern you want interpreted, and I will map it to churn mechanism, business meaning, and recommended intervention.`;
+  }
+
+  if (/\bretention|churn|strategy|offer|campaign|pricing|contract\b/i.test(normalized)) {
+    return `I can help with that. To keep the advice precise and non-speculative, tell me the customer segment, churn issue, and the KPI ${getConsultantIdentity(context).companyName} is trying to improve.`;
+  }
+
+  return `I can help with churn strategy, retention design, ROI, pricing, and broader telecom benchmarks. Ask your question, and I will provide specific, professional, and visually structured advice.`;
+}
+
+function getQuickLocalAnswer(messages, context = {}) {
+  const latest = getLatestUserMessage(messages);
+  const previousUser = getPreviousUserMessage(messages);
+  const lastAssistant = getLastAssistantMessage(messages);
+  const normalized = latest.toLowerCase().trim();
+
+  if (GREETING_PATTERN.test(normalized)) {
+    return buildGreetingReply(context);
+  }
+
+  if (FAREWELL_PATTERN.test(normalized)) {
+    return buildFarewellReply(context);
+  }
+
+  if (GRATITUDE_PATTERN.test(normalized)) {
+    return buildThanksReply(context);
+  }
+
+  if (CLOSE_SESSION_PATTERN.test(normalized) && /further assistance|specific areas|anything else/i.test(lastAssistant)) {
+    return buildClosingReply(context);
+  }
+
+  if (DEFINITION_PATTERN.test(normalized)) {
+    const term = extractKnownTerm(latest) || extractKnownTerm(previousUser);
+    if (term) return buildDefinitionAnswer(term, context);
+  }
+
+  const contextualFollowUp = buildContextualFollowUpAnswer(messages, context);
+  if (contextualFollowUp) {
+    return contextualFollowUp;
+  }
+
+  const dataAnswer = buildDataQuestionAnswer(messages, context);
+  if (dataAnswer) {
+    return dataAnswer;
+  }
+
+  return null;
+}
+
+function normaliseAssistantPayload(reply, messages, context = {}) {
+  const latest = getLatestUserMessage(messages).toLowerCase().trim();
+
+  if (!reply) {
+    return wrapReply(buildSafeFallbackReply(messages, context));
+  }
+
+  const structuredPayload = extractStructuredAssistantPayload(reply);
+  if (structuredPayload) {
+    if (!structuredPayload.reply) {
+      return wrapReply(buildSafeFallbackReply(messages, context));
+    }
+
+    if (looksLikeBadAssistantPayload(structuredPayload.reply)) {
+      if (/\bapi key|configure|restart the dev server\b/i.test(structuredPayload.reply)) {
+        return wrapReply(SERVICE_UNAVAILABLE_MESSAGE);
+      }
+      return wrapReply(buildSafeFallbackReply(messages, context));
+    }
+
+    return {
+      reply: structuredPayload.reply.trim(),
+      visuals: sanitizeVisuals(structuredPayload.visuals),
+    };
+  }
+
+  if (looksLikeBadAssistantPayload(reply)) {
+    if (/\bapi key|configure|restart the dev server\b/i.test(reply)) {
+      return wrapReply(SERVICE_UNAVAILABLE_MESSAGE);
+    }
+    return wrapReply(buildSafeFallbackReply(messages, context));
+  }
+
+  if (GRATITUDE_PATTERN.test(latest)) {
+    return wrapReply(buildThanksReply(context));
+  }
+
+  if (FAREWELL_PATTERN.test(latest)) {
+    return wrapReply(buildFarewellReply(context));
+  }
+
+  if (CLOSE_SESSION_PATTERN.test(latest) && /further assistance|specific areas|anything else/i.test(getLastAssistantMessage(messages))) {
+    return wrapReply(buildClosingReply(context));
+  }
+
+  if (DEFINITION_PATTERN.test(latest)) {
+    const term = extractKnownTerm(latest) || extractKnownTerm(getPreviousUserMessage(messages));
+    if (term && !new RegExp(TERM_DEFINITIONS[term].full, 'i').test(reply) && !new RegExp(`\\b${term}\\b`, 'i').test(reply)) {
+      return wrapReply(buildDefinitionAnswer(term, context));
+    }
+  }
+
+  return wrapReply(reply.trim());
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -76,395 +939,72 @@ export default async function handler(req, res) {
   }
 
   const { messages = [], context = {} } = req.body;
-  const latestUserMessage = getLatestUserMessage(messages);
-  const directAnswer = getDirectConsultantAnswer(messages);
 
-  if (directAnswer) {
-    return res.status(200).json({ reply: directAnswer, model: 'local' });
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'Messages array is required' });
   }
 
-  const analysis = analyzeQuery(latestUserMessage);
-  const webInsights = await fetchWebInsights(latestUserMessage, analysis, context);
-  const systemPrompt = buildSystemPrompt(analysis, context, webInsights);
+  const quickAnswer = buildLocalPayload(messages, context);
+  if (quickAnswer) {
+    return res.status(200).json({ ...quickAnswer, model: 'local' });
+  }
+
+  const groqMessages = buildGroqMessages(messages, context);
+  if (groqMessages.length <= 1) {
+    return res.status(400).json({ error: 'No valid messages to process' });
+  }
 
   try {
-    const conversationText = buildConversation(messages);
-    const fullPrompt = `${systemPrompt}\n\nConversation:\n${conversationText}\n\nAssistant:`;
-    const encodedPrompt = encodeURIComponent(fullPrompt);
-
-    const response = await fetch(
-      `https://text.pollinations.ai/${encodedPrompt}?model=mistral&seed=${Date.now() % 1000}`,
-      {
-        method: 'GET',
-        headers: { Accept: 'text/plain' },
-        signal: AbortSignal.timeout(30000),
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Pollinations API error: ${response.status}`);
+    const groqApiKey = process.env.GROQ_API_KEY?.trim();
+    if (!groqApiKey) {
+      return res.status(200).json({
+        reply: SERVICE_UNAVAILABLE_MESSAGE,
+        visuals: [],
+        model: 'service-unavailable',
+      });
     }
 
-    const text = await response.text();
-    const reply = sanitizeAssistantReply(text);
-
-    if (!reply) {
-      throw new Error('Provider returned a service notice instead of a chat answer');
-    }
-
-    return res.status(200).json({ reply, model: 'mistral' });
-  } catch {
-    return res.status(200).json({
-      reply: generateFallbackResponse(latestUserMessage, analysis, webInsights),
-      model: 'fallback',
-      offline: true,
-    });
-  }
-}
-
-function getLatestUserMessage(messages) {
-  return [...messages].reverse().find((message) => message.role === 'user')?.content?.trim() || '';
-}
-
-function getRecentUserMessages(messages) {
-  return messages.filter((message) => message.role === 'user').map((message) => message.content?.trim() || '').filter(Boolean);
-}
-
-function getDirectConsultantAnswer(messages) {
-  const userMessages = getRecentUserMessages(messages);
-  const latest = userMessages[userMessages.length - 1] || '';
-  const previous = userMessages[userMessages.length - 2] || '';
-  const latestNormalized = latest.toLowerCase();
-
-  const latestTerm = extractKnownTerm(latest);
-  const previousTerm = extractKnownTerm(previous);
-  const activeTerm = latestTerm || (
-    /\b(full meaning|meaning|expand|what does that mean|define it|explain that)\b/i.test(latest) ? previousTerm : null
-  );
-
-  if (activeTerm) {
-    return buildDefinitionAnswer(activeTerm);
-  }
-
-  if (/^\s*what is\s+[a-z]{2,10}\??\s*$/i.test(latest)) {
-    const unknownTerm = latest.replace(/^\s*what is\s+/i, '').replace(/\?/g, '').trim().toUpperCase();
-    return `I do not have that term in my telecom glossary yet. If you want, I can still explain it in business context if you tell me whether it relates to churn, finance, explainability, or customer experience.`;
-  }
-
-  if (/^\s*(tell me the full meaning|what is the full meaning|expand it|what does it stand for)\??\s*$/i.test(latest) && previousTerm) {
-    return buildDefinitionAnswer(previousTerm);
-  }
-
-  return '';
-}
-
-function extractKnownTerm(text = '') {
-  const normalized = text.toLowerCase();
-  return Object.keys(TERM_DEFINITIONS).find((term) => new RegExp(`\\b${term}\\b`, 'i').test(normalized)) || '';
-}
-
-function buildDefinitionAnswer(term) {
-  const info = TERM_DEFINITIONS[term];
-  if (!info) {
-    return '';
-  }
-
-  return `**${term.toUpperCase()}** means **${info.full}**.
-
-${info.explanation}
-
-**Why it matters**
-${info.whyItMatters}
-
-**Simple formula**
-${info.formula}
-
-**In practice**
-${info.usage}`;
-}
-
-function buildConversation(messages) {
-  return messages
-    .slice(-8)
-    .map((message) => `${message.role === 'user' ? 'Human' : 'Assistant'}: ${message.content}`)
-    .join('\n\n');
-}
-
-function analyzeQuery(query = '') {
-  const normalized = query.toLowerCase();
-  const numbers = [...query.matchAll(/(?:NGN|USD|EUR|GBP|\$)?\s?\d[\d,]*(?:\.\d+)?%?/gi)].map((match) => match[0]);
-
-  const intent =
-    normalized.includes('shap') || normalized.includes('lime') || normalized.includes('explain')
-      ? 'explainability'
-      : normalized.includes('roi') || normalized.includes('arpu') || normalized.includes('clv') || normalized.includes('revenue')
-        ? 'roi'
-        : normalized.includes('price') || normalized.includes('discount')
-          ? 'pricing'
-          : normalized.includes('contract') || normalized.includes('month-to-month')
-            ? 'contract'
-            : normalized.includes('campaign') || normalized.includes('strategy') || normalized.includes('retain')
-              ? 'retention'
-              : 'general';
-
-  const focusAreas = [
-    normalized.includes('tenure') && 'tenure',
-    normalized.includes('fiber') && 'fiber service quality',
-    normalized.includes('billing') && 'billing experience',
-    normalized.includes('payment') && 'payment friction',
-    normalized.includes('support') && 'support coverage',
-    normalized.includes('nigeria') && 'nigerian market context',
-    normalized.includes('africa') && 'african telecom context',
-    /\blatest|current|today|recent|trend|benchmark|news\b/.test(normalized) && 'fresh web context',
-  ].filter(Boolean);
-
-  return { intent, focusAreas, numbers };
-}
-
-async function fetchWebInsights(query, analysis, context) {
-  if (!query) {
-    return { summary: '', results: [] };
-  }
-
-  const searchQuery = buildSearchQuery(query, analysis, context);
-
-  try {
-    const response = await fetch(`https://duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`, {
+    const modelName = getGroqModelName();
+    const response = await fetch(getGroqEndpoint(), {
+      method: 'POST',
       headers: {
-        Accept: 'text/html',
-        'User-Agent': 'Mozilla/5.0 (compatible; ChurnIQ/1.0; +https://giftwarieta.com.ng)',
+        Authorization: `Bearer ${groqApiKey}`,
+        'Content-Type': 'application/json',
       },
-      signal: AbortSignal.timeout(6000),
+      body: JSON.stringify({
+        model: modelName,
+        temperature: 0.2,
+        stream: false,
+        messages: groqMessages,
+      }),
+      signal: AbortSignal.timeout(40000),
     });
 
     if (!response.ok) {
-      throw new Error(`Search failed with status ${response.status}`);
+      const errBody = await response.json().catch(() => ({}));
+      const detail = errBody?.error || errBody?.message || `HTTP ${response.status}`;
+      console.error('Groq API error:', response.status, detail);
+      return res.status(200).json({
+        reply: SERVICE_UNAVAILABLE_MESSAGE,
+        visuals: [],
+        model: 'service-unavailable',
+      });
     }
 
-    const html = await response.text();
-    const results = parseDuckDuckGoResults(html).slice(0, 3);
+    const data = await response.json();
+    const reply = extractGroqReply(data);
+    const payload = normaliseAssistantPayload(reply, messages, context);
 
-    return {
-      summary: results.length
-        ? results.map((result, index) => `[${index + 1}] ${result.title}: ${result.snippet}`).join(' ')
-        : '',
-      results,
-    };
-  } catch {
-    return { summary: '', results: [] };
+    return res.status(200).json({
+      ...payload,
+      model: modelName,
+    });
+  } catch (error) {
+    console.error('Chat handler error:', error);
+    return res.status(200).json({
+      reply: SERVICE_UNAVAILABLE_MESSAGE,
+      visuals: [],
+      model: 'service-unavailable',
+    });
   }
-}
-
-function buildSearchQuery(query, analysis, context) {
-  const parts = [query.trim()];
-  const topic = context.topic?.trim();
-
-  if (topic && !query.toLowerCase().includes(topic.toLowerCase())) {
-    parts.push(topic);
-  }
-
-  if (!/telecom|telco|churn|retention/i.test(query)) {
-    parts.push('telecom churn retention');
-  }
-
-  if (analysis.intent === 'roi') {
-    parts.push('benchmarks case study');
-  }
-
-  if (analysis.intent === 'explainability') {
-    parts.push('explainability examples');
-  }
-
-  if (analysis.intent === 'retention' || analysis.intent === 'contract' || analysis.intent === 'pricing') {
-    parts.push('best practices');
-  }
-
-  return parts.join(' ');
-}
-
-function parseDuckDuckGoResults(html = '') {
-  const titleMatches = [...html.matchAll(/<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/g)];
-  const snippetMatches = [...html.matchAll(/<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>|<div[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/div>/g)];
-
-  return titleMatches
-    .map((match, index) => ({
-      url: decodeDuckDuckGoUrl(match[1]),
-      title: stripHtml(match[2]),
-      snippet: stripHtml(snippetMatches[index]?.[1] || snippetMatches[index]?.[2] || ''),
-    }))
-    .filter((result) => result.title && result.snippet);
-}
-
-function decodeDuckDuckGoUrl(url = '') {
-  try {
-    const normalized = url.startsWith('//') ? `https:${url}` : url;
-    const parsed = new URL(normalized);
-    const redirect = parsed.searchParams.get('uddg');
-    return redirect ? decodeURIComponent(redirect) : normalized;
-  } catch {
-    return url;
-  }
-}
-
-function stripHtml(value = '') {
-  return value
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&#x27;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function buildSystemPrompt(analysis, context, webInsights) {
-  return `You are ChurnIQ's senior telecom retention consultant.
-You combine churn analytics, customer lifecycle strategy, pricing design, explainable AI interpretation, and web-informed market research.
-
-Your goals:
-- Give business-appropriate answers that feel expert, specific, and immediately usable.
-- Adapt depth to the user's question instead of giving generic templates.
-- When the user mentions numbers such as ARPU, churn rate, campaign cost, CLV, or percentages, use them in your reasoning.
-- If the topic is SHAP or LIME, translate the model output into plain-English business meaning and recommended action.
-- If the topic is retention or campaign strategy, prioritize segmentation, offer design, service recovery, and measurement.
-- If the topic is ROI, show the logic clearly and state assumptions.
-- Use the live web insights below when they add useful context, examples, trends, or benchmarks.
-
-Response rules:
-- Lead with the direct answer.
-- Use short sections or bullets when they improve clarity.
-- Be concrete about KPIs such as churn rate, save rate, ARPU, CLV, NPS, service complaints, and cost per saved customer.
-- Tie recommendations back to revenue protection, retention impact, or customer experience.
-- Do not fabricate sources, statistics, or recent events.
-- Avoid mentioning model providers, APIs, infrastructure, service notices, or backend details.
-- Do not say you are using fallback logic.
-
-Current context:
-- Topic hint: ${context.topic || 'telecom churn analytics'}
-- Detected intent: ${analysis.intent}
-- Focus areas: ${analysis.focusAreas.length ? analysis.focusAreas.join(', ') : 'not explicitly stated'}
-- Mentioned numbers: ${analysis.numbers.length ? analysis.numbers.join(', ') : 'none'}
-- Live web insights: ${webInsights.summary || 'No live web findings were available'}
-
-If the user's request is broad, respond like a strong consultant:
-1. Diagnose the likely issue.
-2. Recommend the highest-impact actions.
-3. Suggest the KPIs or experiment design needed next.`;
-}
-
-function sanitizeAssistantReply(text = '') {
-  const reply = text.trim();
-  if (!reply) {
-    return '';
-  }
-
-  const normalized = reply.toLowerCase();
-  if (BLOCKED_REPLY_PATTERNS.some((pattern) => normalized.includes(pattern))) {
-    return '';
-  }
-
-  return reply;
-}
-
-function generateFallbackResponse(query, analysis, webInsights) {
-  const amount = analysis.numbers.find((value) => value.includes('$') || /^NGN/i.test(value)) || null;
-  const liveTip = webInsights.results[0]?.snippet
-    ? `Live web context suggests: ${webInsights.results[0].snippet}`
-    : null;
-
-  if (analysis.intent === 'explainability') {
-    return `Here is the right way to interpret that explainability result:
-
-**What it means**
-- Positive SHAP or LIME weight means the feature is pushing the customer toward churn.
-- Negative contribution means the feature is helping retention.
-- The largest absolute values are the features you should translate into business action first.
-
-**How to act on it**
-- If contract type is a top positive driver, test longer-term plan incentives.
-- If tenure is a top positive driver, strengthen onboarding and first-90-day engagement.
-- If support or service quality features dominate, prioritize service recovery before discounting.
-
-**What to report**
-- Top 3 churn drivers
-- Recommended intervention for each driver
-- Expected save-rate lift by segment
-
-${liveTip || 'A strong next step is to compare those driver patterns with your actual retention interventions by segment.'}`;
-  }
-
-  if (analysis.intent === 'roi') {
-    return `For ROI, use this decision logic:
-
-**Core formula**
-- Customers at risk = total customers x churn rate
-- Customers saved = customers at risk x campaign success rate
-- Revenue protected = customers saved x ARPU x retention horizon
-- Net ROI = revenue protected - campaign cost
-
-**What to check**
-- Use a realistic save rate, not an optimistic one.
-- Separate high-ARPU segments from low-ARPU segments before investing.
-- Track cost per saved customer and payback period.
-
-${amount ? `Because you mentioned ${amount}, I would anchor the first scenario analysis around that value and compare conservative, base, and aggressive save-rate assumptions.` : 'Start with conservative, base, and aggressive save-rate scenarios so the business can compare risk before launch.'}
-
-${liveTip || 'Use at least one external benchmark or case study to sanity-check your projected save rate before launch.'}`;
-  }
-
-  if (analysis.intent === 'pricing') {
-    return `Pricing changes should reduce churn without training customers to wait for discounts:
-
-**Best moves**
-- Offer targeted discounts only to high-risk, high-value customers.
-- Prefer value-add bundles, loyalty rewards, or temporary credits over flat price cuts.
-- Use contract-upgrade offers for month-to-month customers rather than blanket price reductions.
-
-**Guardrails**
-- Track save rate, ARPU dilution, and 90-day retention after the offer.
-- Exclude low-value customers where the discount cost exceeds likely revenue protected.
-- Compare discount-led saves with service-led saves so you do not overuse incentives.
-
-${liveTip || 'Recent guidance often reinforces pairing pricing changes with service or bundle improvements instead of relying on discounts alone.'}`;
-  }
-
-  if (analysis.intent === 'contract' || analysis.intent === 'retention') {
-    return `For telecom churn reduction, I would focus on the highest-yield interventions first:
-
-**Priority segments**
-- Month-to-month customers
-- Short-tenure customers
-- Customers with repeated support or quality complaints
-- Customers with payment friction
-
-**Highest-impact actions**
-- Contract upgrade incentives for flexible-plan customers
-- Early-lifecycle onboarding and usage education
-- Proactive service recovery for complaint-heavy cohorts
-- Auto-pay or billing simplification for customers with payment issues
-
-**KPIs to track**
-- Save rate
-- Churn rate by segment
-- ARPU retained
-- Cost per saved customer
-- 30/60/90-day post-intervention retention
-
-${liveTip || 'A practical enhancement is to validate those interventions against recent telecom retention case studies before rollout.'}`;
-  }
-
-  return `Here is a strong way to approach that question:
-
-**Start with diagnosis**
-- Identify which customer segment is driving the churn problem.
-- Separate commercial causes such as contract or pricing from experience causes such as support or service quality.
-
-**Then choose action**
-- Match each high-risk segment to one clear intervention.
-- Prioritize actions that protect ARPU and customer lifetime value, not just headline save rate.
-
-**Measure success**
-- Track churn reduction, revenue protected, cost per saved customer, and retention durability over time.
-
-${liveTip || 'Where possible, support the plan with a recent external benchmark or case example so the recommendation is grounded.'}`;
 }
