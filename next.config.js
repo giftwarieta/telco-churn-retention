@@ -1,6 +1,16 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    outputFileTracingIncludes: {
+      '/api/backend': [
+        './models/**/*',
+        './src/**/*',
+        './data/**/*',
+        './postdictive_full_results.csv',
+      ],
+    },
+  },
   async headers() {
     return [
       {
