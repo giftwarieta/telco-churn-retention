@@ -126,25 +126,25 @@ export default function HomePage() {
 
   return (
     <Layout title="Overview">
-      <section className="mb-8 grid gap-6 lg:grid-cols-[1.35fr_0.85fr]">
-        <Card className="overflow-hidden p-6 sm:p-8">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
+      <section className="mb-8 flex min-h-[calc(100svh-9.5rem)] flex-col gap-4 lg:grid lg:min-h-0 lg:grid-cols-[1.35fr_0.85fr] lg:gap-6">
+        <Card className="order-2 overflow-hidden p-5 text-center sm:p-8 lg:order-1 lg:text-left">
+          <div className="mb-4 flex flex-wrap items-center justify-center gap-2 lg:justify-start">
             <Badge color="cyan">Modern retention workspace</Badge>
             <Badge color="amber">Responsive dashboard</Badge>
             <Badge color={dataSource === 'custom' ? 'purple' : 'emerald'}>{dataSource === 'custom' ? 'Custom route active' : 'Default route active'}</Badge>
           </div>
 
-          <h1 className="font-display max-w-3xl text-4xl font-bold leading-tight text-white sm:text-5xl">
+          <h1 className="font-display mx-auto max-w-3xl text-3xl font-bold leading-tight text-white sm:text-5xl lg:mx-0">
             Turn churn signals into <span className="gradient-text">retention action</span>
           </h1>
 
-          <p className="mt-4 max-w-2xl text-base leading-relaxed text-slate-400">
+          <p className="mt-4 mx-auto max-w-2xl text-sm leading-relaxed text-slate-400 sm:text-base lg:mx-0">
             Use one guided workspace to score churn risk, explain model behaviour, evaluate retention economics, and move from analytics into practical customer action.
           </p>
 
           <div className="mt-6 rounded-3xl border border-sky-500/15 bg-sky-500/8 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
+            <div className="flex flex-wrap items-start justify-center gap-4 lg:justify-between">
+              <div className="flex items-start gap-3 text-left">
                 <div className="rounded-2xl bg-sky-500/12 p-3">
                   <Lock className="h-5 w-5 text-sky-400" />
                 </div>
@@ -159,7 +159,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center gap-3">
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
             <span className="rounded-full border border-[color:var(--border)] bg-white/3 px-3 py-2 text-xs font-medium text-slate-300">
               Active route: {routeLabel}
             </span>
@@ -171,7 +171,7 @@ export default function HomePage() {
             </span>
           </div>
 
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center lg:justify-start">
             <Link href="/predict">
               <Button icon={Brain} size="lg">
                 Start Prediction
@@ -185,8 +185,8 @@ export default function HomePage() {
           </div>
         </Card>
 
-        <Card className="p-6">
-          <div className="mb-4 flex items-center gap-3">
+        <Card className="order-1 my-auto p-5 text-center sm:p-6 lg:order-2 lg:text-left">
+          <div className="mb-4 flex items-center justify-center gap-3 lg:justify-start">
             <div className="rounded-2xl bg-sky-500/10 p-3">
               <Rocket className="h-6 w-6 text-sky-500" />
             </div>
@@ -197,7 +197,7 @@ export default function HomePage() {
           </div>
 
           <div className="rounded-3xl border border-[color:var(--border)] bg-white/3 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-center gap-3 text-center lg:justify-between lg:text-left">
               <div>
                 <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Current route</div>
                 <div className="mt-2 text-lg font-semibold text-white">{routeLabel}</div>
@@ -261,7 +261,7 @@ export default function HomePage() {
             </div>
 
             <div className="mt-4 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg-soft)] p-4">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col items-center justify-between gap-3 text-center sm:flex-row sm:text-left">
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Workspace guide</div>
                   <div className="mt-1 text-sm font-medium text-white">Pick a route, confirm the model context, then move into prediction or training.</div>

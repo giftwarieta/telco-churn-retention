@@ -13,7 +13,7 @@ import {
   Trash2,
   User,
 } from 'lucide-react';
-import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import toast from 'react-hot-toast';
 import { addSessionEvent, getStats, pushGlobalStats, updateStats } from '../lib/analytics';
 import { chatWithConsultant } from '../lib/api';
@@ -236,13 +236,14 @@ function ChatTableVisual({ visual }) {
 function ChatPieVisual({ visual }) {
   const data = (visual.data || []).filter((item) => typeof item?.value === 'number' && item.value >= 0);
   if (!data.length) return null;
+  const isDonut = visual.type === 'donut';
 
   return (
     <div className="rounded-2xl border border-white/8 bg-black/10 p-3">
       <div className="h-64 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={data} dataKey="value" nameKey="label" innerRadius={52} outerRadius={84} paddingAngle={2}>
+            <Pie data={data} dataKey="value" nameKey="label" innerRadius={isDonut ? 60 : 34} outerRadius={84} paddingAngle={2}>
               {data.map((entry, index) => (
                 <Cell key={`${entry.label}-${index}`} fill={VISUAL_COLORS[index % VISUAL_COLORS.length]} />
               ))}
@@ -259,6 +260,34 @@ function ChatPieVisual({ visual }) {
             <span className="font-semibold text-white">{formatVisualValue(entry.value)}</span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function ChatLineVisual({ visual }) {
+  const data = (visual.data || []).filter((item) => typeof item?.value === 'number');
+  if (!data.length) return null;
+
+  return (
+    <div className="rounded-2xl border border-white/8 bg-black/10 p-3">
+      <div className="h-72 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 8, right: 12, left: 4, bottom: 24 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis
+              dataKey="label"
+              tick={{ fill: '#94a3b8', fontSize: 11 }}
+              angle={data.length > 4 ? -18 : 0}
+              textAnchor={data.length > 4 ? 'end' : 'middle'}
+              interval={0}
+              height={data.length > 4 ? 46 : 30}
+            />
+            <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} />
+            <Tooltip cursor={{ stroke: 'rgba(56,189,248,0.2)', strokeWidth: 1 }} content={<VisualTooltip />} />
+            <Line type="monotone" dataKey="value" stroke="#38bdf8" strokeWidth={3} dot={{ r: 4, fill: '#22d3ee' }} activeDot={{ r: 5 }} />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
@@ -352,8 +381,9 @@ function ChatVisuals({ visuals = [] }) {
           {visual.description ? <p className="text-xs leading-relaxed text-slate-500">{visual.description}</p> : null}
 
           {visual.type === 'table' ? <ChatTableVisual visual={visual} /> : null}
-          {visual.type === 'pie' ? <ChatPieVisual visual={visual} /> : null}
+          {visual.type === 'pie' || visual.type === 'donut' ? <ChatPieVisual visual={visual} /> : null}
           {visual.type === 'bar' || visual.type === 'column' ? <ChatBarVisual visual={visual} /> : null}
+          {visual.type === 'line' ? <ChatLineVisual visual={visual} /> : null}
           {visual.type === 'decision_tree' ? <ChatDecisionTreeVisual visual={visual} /> : null}
         </div>
       ))}
@@ -698,7 +728,7 @@ export default function ConsultantPage() {
           </Card>
         </div>
 
-        <Card className="order-1 flex h-[calc(100svh-5.5rem)] min-h-0 max-h-[calc(100svh-5.5rem)] flex-col overflow-hidden p-0 lg:order-2 lg:h-[calc(100svh-8.75rem)] lg:max-h-[calc(100svh-8.75rem)]">
+        <Card className="order-1 flex h-[calc(100svh-3.85rem)] min-h-0 max-h-[calc(100svh-3.85rem)] flex-col overflow-hidden p-0 lg:order-2 lg:h-[calc(100svh-6.5rem)] lg:max-h-[calc(100svh-6.5rem)]">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--border)] px-4 py-4 sm:px-5">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 overflow-hidden rounded-full border border-emerald-500/20 bg-emerald-500/12">
@@ -809,19 +839,19 @@ export default function ConsultantPage() {
               </Button>
             </div>
 
-            <div className="mt-3">
+            <div className="mt-3 hidden sm:block">
               <div className="mb-2 flex items-center gap-2">
                 <Lightbulb className="h-4 w-4 text-amber-500" />
                 <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Suggested prompts</span>
               </div>
-              <div className="flex gap-2 overflow-x-auto pb-1 sm:grid sm:overflow-visible sm:pb-0 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {QUICK_PROMPTS.map((item) => (
                   <button
                     key={item.label}
                     onClick={() => sendMessage(item.prompt)}
                     disabled={loading || !profileReady}
                     type="button"
-                    className="min-w-[15rem] flex-shrink-0 rounded-2xl border border-transparent bg-white/3 px-3 py-3 text-left transition-all duration-200 hover:border-sky-500/20 hover:bg-sky-500/8 disabled:cursor-not-allowed disabled:opacity-50 sm:min-w-0 sm:flex-shrink"
+                    className="rounded-2xl border border-transparent bg-white/3 px-3 py-3 text-left transition-all duration-200 hover:border-sky-500/20 hover:bg-sky-500/8 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <div className="mb-1 text-sm font-medium text-slate-300">{item.label}</div>
                     <div className="line-clamp-2 text-xs leading-relaxed text-slate-500">{item.prompt}</div>
