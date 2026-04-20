@@ -3,6 +3,7 @@ import Layout from '../components/Layout';
 import { SectionHeader, Card, Button, Badge } from '../components/ui';
 import { DollarSign, TrendingUp, Users, Calculator, Info } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid } from 'recharts';
+import { calculateROI } from '../lib/api';
 import { addSessionEvent, pushGlobalStats, updateStats } from '../lib/analytics';
 
 function fmt(n, isCurrency = true) {
@@ -20,6 +21,7 @@ export default function ROIPage() {
     avgCLV: 102000,
   });
   const [result, setResult] = useState(null);
+  const [roiError, setRoiError] = useState(null);
 
   const set = (k, v) => setParams(p => ({ ...p, [k]: parseFloat(v) || 0 }));
 
@@ -27,28 +29,40 @@ export default function ROIPage() {
     calculate();
   }, [params]);
 
-  const calculate = () => {
+  const calculate = async () => {
     const {
       totalCustomers, churnRate, avgARPU, retentionCostPerCustomer, successRate, avgCLV
     } = params;
 
-    const churningCustomers = Math.round(totalCustomers * churnRate);
-    const revenueAtRisk = churningCustomers * avgARPU * 12;
-    const totalRetentionCost = churningCustomers * retentionCostPerCustomer;
-    const savedCustomers = Math.round(churningCustomers * successRate);
-    const revenueRecovered = savedCustomers * avgARPU * 12;
-    const clvSaved = savedCustomers * avgCLV;
-    const netROI = revenueRecovered - totalRetentionCost;
-    const roiPercent = totalRetentionCost > 0 ? ((netROI / totalRetentionCost) * 100) : 0;
-    const paybackMonths = revenueRecovered > 0 ? (totalRetentionCost / (revenueRecovered / 12)) : 0;
+    try {
+      const data = await calculateROI({
+        total_customers: totalCustomers,
+        churn_rate: churnRate,
+        avg_arpu: avgARPU,
+        retention_cost: retentionCostPerCustomer,
+        success_rate: successRate,
+        avg_clv: avgCLV,
+      });
 
-    setResult({
-      churningCustomers, revenueAtRisk, totalRetentionCost,
-      savedCustomers, revenueRecovered, clvSaved, netROI, roiPercent, paybackMonths,
-    });
-    updateStats({ roiCalculations: 1 });
-    pushGlobalStats({ roiCalculations: 1 });
-    addSessionEvent({ type: 'roi', customers: totalCustomers });
+      setResult({
+        churningCustomers: data.churning_customers,
+        revenueAtRisk: data.revenue_at_risk,
+        totalRetentionCost: data.total_retention_cost,
+        savedCustomers: data.saved_customers,
+        revenueRecovered: data.revenue_recovered,
+        clvSaved: data.clv_saved,
+        netROI: data.net_roi,
+        roiPercent: data.roi_percent,
+        paybackMonths: data.payback_months,
+      });
+      setRoiError(null);
+      updateStats({ roiCalculations: 1 });
+      pushGlobalStats({ roiCalculations: 1 });
+      addSessionEvent({ type: 'roi', customers: totalCustomers });
+    } catch {
+      setRoiError('ROI service unavailable right now. Showing no result until the backend responds again.');
+      setResult(null);
+    }
   };
 
   const monthlyProjection = result ? Array.from({ length: 12 }, (_, i) => ({
@@ -114,6 +128,12 @@ export default function ROIPage() {
 
         {/* Results */}
         <div className="lg:col-span-3 space-y-4">
+          {roiError ? (
+            <Card className="border-amber-500/20 bg-amber-500/8 p-5">
+              <div className="text-sm font-semibold text-amber-400">ROI service unavailable</div>
+              <p className="mt-1 text-xs leading-relaxed text-slate-400">{roiError}</p>
+            </Card>
+          ) : null}
           {result && (
             <>
               {/* KPI cards */}
