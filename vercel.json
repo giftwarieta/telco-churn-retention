@@ -1,80 +1,8 @@
 {
-  "framework": "nextjs",
-  "buildCommand": "next build",
-  "devCommand": "next dev",
-  "installCommand": "npm install",
-  "outputDirectory": ".next",
-  "functions": {
-    "api/index.py": {
-      "maxDuration": 30
-    }
-  },
   "rewrites": [
     {
-      "source": "/api",
-      "destination": "/api/index"
-    },
-    {
-      "source": "/api/",
-      "destination": "/api/index"
-    },
-    {
-      "source": "/api/health",
-      "destination": "/api/index/health"
-    },
-    {
-      "source": "/api/docs",
-      "destination": "/api/index/docs"
-    },
-    {
-      "source": "/api/redoc",
-      "destination": "/api/index/redoc"
-    },
-    {
-      "source": "/api/openapi.json",
-      "destination": "/api/index/openapi.json"
-    },
-    {
-      "source": "/api/model/info",
-      "destination": "/api/index/model/info"
-    },
-    {
-      "source": "/api/model/metrics",
-      "destination": "/api/index/model/metrics"
-    },
-    {
-      "source": "/api/predict",
-      "destination": "/api/index/predict"
-    },
-    {
-      "source": "/api/predict/batch",
-      "destination": "/api/index/predict/batch"
-    },
-    {
-      "source": "/api/explain/shap",
-      "destination": "/api/index/explain/shap"
-    },
-    {
-      "source": "/api/explain/lime",
-      "destination": "/api/index/explain/lime"
-    },
-    {
-      "source": "/api/train",
-      "destination": "/api/index/train"
-    },
-    {
-      "source": "/api/roi/calculate",
-      "destination": "/api/index/roi/calculate"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
-        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type, Authorization" }
-      ]
+      "source": "/api/:path*",
+      "destination": "/api/index.py"
     }
   ]
 }
