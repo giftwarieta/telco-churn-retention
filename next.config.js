@@ -1,52 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  async rewrites() {
-    return [
-      {
-        source: '/api/:path*',
-        destination: '/api/index.py', // Wait for Next.js to forward it to your Python file
-      },
-    ];
-  },
+  reactStrictMode: true,
 };
 
 module.exports = nextConfig;
-
-// /** @type {import('next').NextConfig} */
-// const nextConfig = {
-//   reactStrictMode: true,
-//   experimental: {
-//     outputFileTracingIncludes: {
-//       '/api': [
-//         './api/',
-//         './models/**/*',
-//         './src/**/*',
-//         './data/**/*',
-//         './postdictive_full_results.csv',
-//       ],
-//       '/api/index': [
-//         './api/',
-//         './models/**/*',
-//         './src/**/*',
-//         './data/**/*',
-//         './postdictive_full_results.csv',
-//       ],
-//     },
-//   },
-//   async headers() {
-//     return [
-//       {
-//         source: '/api/:path*',
-//         headers: [
-//           { key: 'Access-Control-Allow-Origin', value: '*' },
-//           { key: 'Access-Control-Allow-Methods', value: 'GET,POST,OPTIONS' },
-//           { key: 'Access-Control-Allow-Headers', value: 'Content-Type' },
-//         ],
-//       },
-//     ];
-//   },
-// };
-
-// module.exports = nextConfig;
-
-

@@ -3,7 +3,7 @@ import { BarChart, Bar, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis
 import { Info, RefreshCw, TrendingUp } from 'lucide-react';
 import Layout from '../components/Layout';
 import { Badge, Button, Card, ProgressBar, SectionHeader } from '../components/ui';
-import { updateStats } from '../lib/analytics';
+import { pushGlobalStats, updateStats } from '../lib/analytics';
 import { getLIMEExplanation, getModelMetrics, getSHAPExplanation } from '../lib/api';
 import { getDefaultWorkspaceContext, getWorkspaceContext } from '../lib/workspace';
 
@@ -189,6 +189,7 @@ export default function InsightsPage() {
       setLimeData(Array.isArray(limeResponse?.lime_values) && limeResponse.lime_values.length ? limeResponse.lime_values : DEMO_LIME);
       setModelMetrics(Array.isArray(metricsResponse?.metrics) && metricsResponse.metrics.length ? metricsResponse.metrics : DEMO_METRICS);
       updateStats({ shapAnalysisRun: 1 });
+      pushGlobalStats({ shapAnalysisRun: 1 });
     } catch {
       setShapData(DEMO_SHAP);
       setLimeData(DEMO_LIME);

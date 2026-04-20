@@ -117,8 +117,11 @@ export default function TrainPage() {
         })
       );
       toast.success('Training complete');
-    } catch {
-      setTrainError('Training could not be completed right now. Please confirm that your dataset includes the expected churn target column and try again.');
+    } catch (err) {
+      setTrainError(
+        err?.message ||
+        'Training could not be completed right now. Please confirm that your dataset includes the expected churn target column and try again.'
+      );
     } finally {
       setLoading(false);
     }

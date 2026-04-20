@@ -1,6 +1,4 @@
-// pages/api/global-stats.js
-// Global cumulative stats via Vercel KV (Redis).
-// Supports both app-specific telcom_churn_* env vars and the generic KV_* names.
+import { getRedisConfig, normaliseRedisHash, runRedisBatch, runRedisCommand } from '../../lib/redis';
 
 const STATS_KEY = 'churniq:global_stats';
 
@@ -18,103 +16,128 @@ const defaultStats = {
   lastUpdated: null,
 };
 
-function getKvUrl() {
-  return process.env.telcom_churn_KV_REST_API_URL || process.env.KV_REST_API_URL || null;
+const NUMERIC_FIELDS = Object.keys(defaultStats).filter(
+  (key) => typeof defaultStats[key] === 'number'
+);
+
+function buildStorageMeta() {
+  const config = getRedisConfig();
+  return {
+    configured: config.configured,
+    provider: config.provider,
+    key: STATS_KEY,
+  };
 }
 
-function getKvToken() {
-  return process.env.telcom_churn_KV_REST_API_TOKEN || process.env.KV_REST_API_TOKEN || null;
+function toSafeInteger(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return Math.trunc(value);
 }
 
-async function kvGet(key) {
-  const url = getKvUrl();
-  const token = getKvToken();
-  if (!url || !token) return null;
+function normaliseStoredStats(hash) {
+  const normalized = {
+    ...defaultStats,
+    createdAt: null,
+    lastUpdated: null,
+  };
 
-  try {
-    const res = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.result || null;
-  } catch {
-    return null;
+  const raw = normaliseRedisHash(hash);
+  if (!raw) return normalized;
+
+  for (const field of NUMERIC_FIELDS) {
+    const parsed = Number(raw[field]);
+    normalized[field] = Number.isFinite(parsed) ? parsed : defaultStats[field];
   }
-}
 
-async function kvSet(key, value) {
-  const url = getKvUrl();
-  const token = getKvToken();
-  if (!url || !token) return false;
+  normalized.createdAt = typeof raw.createdAt === 'string' ? raw.createdAt : null;
+  normalized.lastUpdated = typeof raw.lastUpdated === 'string' ? raw.lastUpdated : null;
 
-  try {
-    const res = await fetch(`${url}/set/${encodeURIComponent(key)}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ value: JSON.stringify(value) }),
-      signal: AbortSignal.timeout(5000),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return normalized;
 }
 
 async function getStats() {
-  const raw = await kvGet(STATS_KEY);
-  if (!raw) return { ...defaultStats, createdAt: new Date().toISOString() };
+  const stored = await runRedisCommand('hgetall', [STATS_KEY]);
+  return normaliseStoredStats(stored);
+}
 
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return { ...defaultStats, createdAt: new Date().toISOString() };
+async function incrementStats(increments = {}) {
+  const current = await getStats();
+  const now = new Date().toISOString();
+  const createdAt = current.createdAt || now;
+
+  const commands = Object.entries(increments)
+    .map(([field, value]) => {
+      const safeValue = toSafeInteger(value);
+      if (!NUMERIC_FIELDS.includes(field) || safeValue === null || safeValue === 0) return null;
+
+      return ['HINCRBY', STATS_KEY, field, String(safeValue)];
+    })
+    .filter(Boolean);
+
+  commands.push(['HSET', STATS_KEY, 'createdAt', createdAt, 'lastUpdated', now]);
+
+  await runRedisBatch(commands, true);
+
+  const updated = { ...current, createdAt, lastUpdated: now };
+  for (const [field, value] of Object.entries(increments)) {
+    const safeValue = toSafeInteger(value);
+    if (!NUMERIC_FIELDS.includes(field) || safeValue === null) continue;
+    updated[field] = (updated[field] || 0) + safeValue;
   }
+
+  return updated;
 }
 
 export default async function handler(req, res) {
-  const kvConfigured = !!(getKvUrl() && getKvToken());
+  const storage = buildStorageMeta();
 
   if (req.method === 'GET') {
-    if (!kvConfigured) {
+    if (!storage.configured) {
       return res.status(200).json({
         ...defaultStats,
-        _kvConfigured: false,
+        _storage: storage,
       });
     }
 
-    const stats = await getStats();
-    return res.status(200).json({ ...stats, _kvConfigured: true });
+    try {
+      const stats = await getStats();
+      return res.status(200).json({
+        ...stats,
+        _storage: storage,
+      });
+    } catch (error) {
+      console.error('Global stats read error:', error);
+      return res.status(200).json({
+        ...defaultStats,
+        _storage: { ...storage, error: 'read_failed' },
+      });
+    }
   }
 
   if (req.method === 'POST') {
-    if (!kvConfigured) {
-      return res.status(200).json({ ok: true, _kvConfigured: false });
+    if (!storage.configured) {
+      return res.status(200).json({ ok: true, _storage: storage });
     }
 
     const increments = req.body;
-    if (!increments || typeof increments !== 'object') {
+    if (!increments || typeof increments !== 'object' || Array.isArray(increments)) {
       return res.status(400).json({ error: 'Body must be a JSON object of stat increments' });
     }
 
-    const current = await getStats();
-    const updated = { ...current };
-
-    for (const [key, delta] of Object.entries(increments)) {
-      if (key in defaultStats && typeof delta === 'number') {
-        updated[key] = (current[key] || 0) + delta;
-      }
+    try {
+      const stats = await incrementStats(increments);
+      return res.status(200).json({
+        ok: true,
+        stats,
+        _storage: storage,
+      });
+    } catch (error) {
+      console.error('Global stats write error:', error);
+      return res.status(200).json({
+        ok: false,
+        _storage: { ...storage, error: 'write_failed' },
+      });
     }
-
-    updated.lastUpdated = new Date().toISOString();
-    if (!updated.createdAt) updated.createdAt = new Date().toISOString();
-
-    await kvSet(STATS_KEY, updated);
-    return res.status(200).json({ ok: true, stats: updated, _kvConfigured: true });
   }
 
   return res.status(405).json({ error: 'Method not allowed' });

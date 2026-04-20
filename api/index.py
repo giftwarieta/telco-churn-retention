@@ -87,6 +87,8 @@ RAW_FEATURE_DEFAULTS = {
     "TotalCharges": 844.2,
 }
 
+KNOWN_DATASET_COLUMNS = tuple(RAW_FEATURE_COLUMNS) + ("customerID", "Churn", "Churn_Label")
+
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
@@ -187,6 +189,36 @@ def model_to_dict(model: BaseModel) -> dict[str, Any]:
     if hasattr(model, "model_dump"):
         return model.model_dump()
     return model.dict()
+
+
+def _normalise_column_name(value: str) -> str:
+    return "".join(char.lower() for char in str(value).strip() if char.isalnum())
+
+
+def _harmonize_dataset_columns(df: pd.DataFrame) -> pd.DataFrame:
+    frame = df.copy()
+    alias_lookup = {_normalise_column_name(column): column for column in KNOWN_DATASET_COLUMNS}
+    rename_map: dict[str, str] = {}
+
+    for column in frame.columns:
+        canonical = alias_lookup.get(_normalise_column_name(column))
+        if canonical and canonical not in frame.columns:
+            rename_map[column] = canonical
+
+    if rename_map:
+        frame = frame.rename(columns=rename_map)
+
+    return frame
+
+
+def _find_existing_column(columns: list[str] | pd.Index, candidates: tuple[str, ...]) -> Optional[str]:
+    normalized_candidates = {_normalise_column_name(candidate) for candidate in candidates}
+
+    for column in columns:
+        if _normalise_column_name(column) in normalized_candidates:
+            return str(column)
+
+    return None
 
 
 # ---------------------------------------------------------
@@ -514,6 +546,7 @@ def _apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = _harmonize_dataset_columns(df)
     defaults = get_model_metadata().get("feature_defaults") or RAW_FEATURE_DEFAULTS
     raw_frame = (
         ensure_raw_feature_frame(df, defaults=defaults)
@@ -526,21 +559,30 @@ def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def prepare_training_data(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    frame = df.copy()
+    frame = _harmonize_dataset_columns(df)
 
     if SRC_AVAILABLE and clean_and_prepare:
         frame = clean_and_prepare(frame)
     else:
         frame = _normalize_customer_frame(frame)
 
-    if "Churn_Label" in frame.columns:
-        target = pd.to_numeric(frame["Churn_Label"], errors="coerce").fillna(0).astype(int)
-    elif "Churn" in frame.columns:
-        target = frame["Churn"].astype(str).str.strip().str.lower().isin(["yes", "1", "true", "churn"]).astype(int)
+    target_label_column = _find_existing_column(frame.columns, ("Churn_Label", "Churn Label", "churn_label"))
+    target_text_column = _find_existing_column(frame.columns, ("Churn",))
+
+    if target_label_column:
+        target = pd.to_numeric(frame[target_label_column], errors="coerce").fillna(0).astype(int)
+    elif target_text_column:
+        target = frame[target_text_column].astype(str).str.strip().str.lower().isin(["yes", "1", "true", "churn"]).astype(int)
     else:
         raise HTTPException(
             status_code=400,
             detail="Training requires a target column named Churn or Churn_Label in the uploaded dataset.",
+        )
+
+    if target.nunique() < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Training requires at least two target classes in the churn column.",
         )
 
     features = _ensure_raw_feature_frame(frame)
@@ -893,20 +935,29 @@ def train(params: TrainParams):
             stratify=stratify_target,
         )
 
+        preprocessor = _build_preprocessor()
         estimator = build_training_estimator(params.algorithm)
+        training_pipeline = Pipeline(
+            [
+                ("preprocessor", preprocessor),
+                ("model", estimator),
+            ]
+        )
         started_at = datetime.now(timezone.utc)
         import time
 
         start_time = time.perf_counter()
-        estimator.fit(x_train, y_train)
+        training_pipeline.fit(x_train, y_train)
         elapsed = round(time.perf_counter() - start_time, 2)
 
-        y_pred = estimator.predict(x_test)
-        if hasattr(estimator, "predict_proba"):
-            y_prob = estimator.predict_proba(x_test)[:, 1]
+        if hasattr(training_pipeline, "predict_proba"):
+            y_prob = training_pipeline.predict_proba(x_test)[:, 1]
         else:
-            raw_scores = estimator.decision_function(x_test)
+            raw_scores = training_pipeline.decision_function(x_test)
             y_prob = 1 / (1 + np.exp(-raw_scores))
+
+        decision_threshold = _choose_decision_threshold(y_test, y_prob)
+        y_pred = (y_prob >= decision_threshold).astype(int)
 
         tn, fp, fn, tp = confusion_matrix(y_test, y_pred, labels=[0, 1]).ravel()
 
@@ -919,6 +970,12 @@ def train(params: TrainParams):
         except Exception:
             auc_roc = 0.5
 
+        transformed_feature_count = None
+        try:
+            transformed_feature_count = int(len(training_pipeline.named_steps["preprocessor"].get_feature_names_out()))
+        except Exception:
+            transformed_feature_count = None
+
         return {
             "algorithm": params.algorithm,
             "accuracy": accuracy,
@@ -929,6 +986,8 @@ def train(params: TrainParams):
             "training_samples": int(len(x_train)),
             "test_samples": int(len(x_test)),
             "feature_count": int(x_train.shape[1]),
+            "transformed_feature_count": transformed_feature_count,
+            "decision_threshold": decision_threshold,
             "training_time": elapsed,
             "trained_at": started_at.isoformat(),
             "dataset_name": params.filename or params.data_path or "session-upload.csv",
@@ -938,6 +997,7 @@ def train(params: TrainParams):
                 {"label": "Precision", "value": precision},
                 {"label": "Recall", "value": recall},
                 {"label": "F1 Score", "value": f1},
+                {"label": "Decision Threshold", "value": decision_threshold},
             ],
             "confusion_matrix": {
                 "labels": ["Retain", "Churn"],
@@ -953,7 +1013,10 @@ def train(params: TrainParams):
         }
     except HTTPException:
         raise
-    except Exception:
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        print("Training error:", traceback.format_exc())
         raise HTTPException(status_code=500, detail="Training could not be completed right now.")
 
 

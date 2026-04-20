@@ -184,6 +184,178 @@ function buildSimpleChatFallback(content) {
   return FRIENDLY_SERVICE_MESSAGE;
 }
 
+function sanitizeIncomingVisuals(visuals = []) {
+  return (Array.isArray(visuals) ? visuals : [])
+    .filter((item) => item && typeof item === 'object' && typeof item.type === 'string')
+    .slice(0, 3);
+}
+
+function parseStructuredAssistantEnvelope(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (typeof value.reply !== 'string') return null;
+
+  return {
+    reply: value.reply.trim(),
+    visuals: sanitizeIncomingVisuals(value.visuals),
+  };
+}
+
+function extractBalancedChatJson(text = '', startIndex = 0) {
+  if (text[startIndex] !== '{') return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = startIndex; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{') {
+      depth += 1;
+      continue;
+    }
+
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          json: text.slice(startIndex, index + 1),
+          endIndex: index + 1,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeAssistantText(text = '') {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function buildVisualFallbackText(visuals = []) {
+  const primaryType = visuals[0]?.type;
+
+  if (primaryType === 'table') return 'Here is a simple table summary based on the active data.';
+  if (primaryType === 'decision_tree') return 'Here is a simple decision flow you can use for retention actions.';
+  if (primaryType === 'pie' || primaryType === 'donut') return 'Here is a simple distribution view based on the active data.';
+  if (primaryType === 'bar' || primaryType === 'column' || primaryType === 'line') {
+    return 'Here is a simple chart summary based on the active data.';
+  }
+
+  return 'Here is a simple summary based on the active data.';
+}
+
+function extractStructuredAssistantEnvelope(rawReply = '') {
+  const trimmed = normalizeAssistantText(rawReply);
+  if (!trimmed) return null;
+
+  const direct = (() => {
+    try {
+      const parsed = parseStructuredAssistantEnvelope(JSON.parse(trimmed));
+      if (!parsed) return null;
+      return { ...parsed, leadingText: '', trailingText: '' };
+    } catch {
+      return null;
+    }
+  })();
+
+  if (direct) return direct;
+
+  const fromCodeFence = (() => {
+    const match = trimmed.match(/```json\s*([\s\S]*?)```/i);
+    if (!match) return null;
+    try {
+      const parsed = parseStructuredAssistantEnvelope(JSON.parse(match[1]));
+      if (!parsed) return null;
+      return {
+        ...parsed,
+        leadingText: trimmed.slice(0, match.index).trim(),
+        trailingText: trimmed.slice((match.index || 0) + match[0].length).trim(),
+      };
+    } catch {
+      return null;
+    }
+  })();
+
+  if (fromCodeFence) return fromCodeFence;
+
+  const matches = trimmed.matchAll(/\{\s*"reply"\s*:/g);
+  for (const match of matches) {
+    const startIndex = match.index ?? -1;
+    if (startIndex < 0) continue;
+
+    const candidate = extractBalancedChatJson(trimmed, startIndex);
+    if (!candidate) continue;
+
+    try {
+      const parsed = parseStructuredAssistantEnvelope(JSON.parse(candidate.json));
+      if (!parsed) continue;
+
+      return {
+        ...parsed,
+        leadingText: trimmed.slice(0, startIndex).trim(),
+        trailingText: trimmed.slice(candidate.endIndex).trim(),
+      };
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function normalizeAssistantReply(reply = '', visuals = []) {
+  const safeVisuals = sanitizeIncomingVisuals(visuals);
+  const structured = extractStructuredAssistantEnvelope(reply);
+
+  if (!structured) {
+    return {
+      reply: normalizeAssistantText(reply),
+      visuals: safeVisuals,
+    };
+  }
+
+  const outerText = normalizeAssistantText([structured.leadingText, structured.trailingText].filter(Boolean).join('\n\n'));
+  const cleanReply = outerText || normalizeAssistantText(structured.reply) || buildVisualFallbackText(structured.visuals);
+
+  return {
+    reply: cleanReply,
+    visuals: safeVisuals.length ? safeVisuals : sanitizeIncomingVisuals(structured.visuals),
+  };
+}
+
+function normalizeConsultantMessage(message) {
+  if (!message || message.role !== 'assistant' || message.isError) return message;
+
+  const normalized = normalizeAssistantReply(message.content, message.visuals);
+
+  return {
+    ...message,
+    content: normalized.reply,
+    visuals: normalized.visuals,
+  };
+}
+
 const VISUAL_COLORS = ['#06b6d4', '#10b981', '#38bdf8', '#f59e0b', '#8b5cf6', '#f43f5e', '#14b8a6'];
 
 function formatVisualValue(value) {
@@ -616,7 +788,7 @@ export default function ConsultantPage() {
       setConsultantProfileState(storedProfile);
       setProfileDraft(storedProfile);
       if (storedHistory.length > 0) {
-        setMessages(storedHistory);
+        setMessages(storedHistory.map(normalizeConsultantMessage));
       }
       setDataSummaryLoading(true);
 
@@ -691,7 +863,8 @@ export default function ConsultantPage() {
       const context = buildUserDataContext(consultantProfileState, dataSummary);
       const data = await chatWithConsultant(nextMessages, context);
 
-      const reply = (data.reply || '').trim();
+      const normalizedAssistant = normalizeAssistantReply(data.reply, data.visuals);
+      const reply = normalizedAssistant.reply;
       if (!reply) {
         throw new Error('Empty response from AI service');
       }
@@ -701,7 +874,7 @@ export default function ConsultantPage() {
         {
           role: 'assistant',
           content: reply,
-          visuals: Array.isArray(data.visuals) ? data.visuals : [],
+          visuals: normalizedAssistant.visuals,
           timestamp: Date.now(),
         },
       ]);
