@@ -44,7 +44,7 @@ uvicorn app_fastapi:app --reload --port 8000
 2. Import the project into Vercel.
 3. Add `GROQ_API_KEY` so the consultant can respond in production.
 4. Leave `NEXT_PUBLIC_API_URL` unset if you want to use the built-in Python backend.
-5. Optionally add `telcom_churn_KV_REST_API_URL` and `telcom_churn_KV_REST_API_TOKEN` if you want cumulative analytics on the stats page.
+5. Optionally add `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` if you want cumulative analytics on the stats page. The app also accepts the `telcom_churn_*` and `KV_*` aliases.
 6. Deploy.
 
 The frontend will call `/api` automatically on Vercel.

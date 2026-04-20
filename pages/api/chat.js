@@ -50,6 +50,7 @@ const DATASET_OVERVIEW_PATTERN = /\b(about the data|about this dataset|dataset o
 const DATASET_INSIGHTS_PATTERN = /\b(top insights|key insights|insights from the data|what stands out|patterns in the data|findings from the data|data insights)\b/i;
 const COLUMNS_PATTERN = /\b(columns|fields|features|schema|variables)\b/i;
 const VISUAL_REQUEST_PATTERN = /\b(chart|graph|plot|visual|table|pie chart|bar chart|column chart|line chart|donut chart|decision tree|tree diagram)\b/i;
+const HYPOTHETICAL_PATTERN = /\b(what if|suppose|assuming|assume|imagine|say)\b/i;
 
 const SERVICE_UNAVAILABLE_MESSAGE =
   'I am sorry, but I am having difficulty providing a reliable response right now. Please contact the administrator of this website or try again in a little while.';
@@ -417,6 +418,99 @@ function buildColumnsTable(dataProfile) {
   };
 }
 
+function extractHypotheticalChurnRate(message = '') {
+  const text = String(message || '').trim();
+  if (!text || !HYPOTHETICAL_PATTERN.test(text) || !/\bchurn(?:\s+rate)?\b/i.test(text)) return null;
+
+  const explicitMatch =
+    text.match(/\bchurn(?:\s+rate)?(?:\s+\w+){0,6}?\s*(?:was|were|is|be|would be|becomes?|became|at|to|hits?|reaches?)?\s*(\d{1,3}(?:\.\d+)?)\s*(?:%|percent)\b/i) ||
+    text.match(/\b(\d{1,3}(?:\.\d+)?)\s*(?:%|percent)\b/i);
+
+  if (!explicitMatch) return null;
+
+  const rate = Number(explicitMatch[1]);
+  if (!Number.isFinite(rate) || rate < 0 || rate > 100) return null;
+
+  return Number(rate.toFixed(1));
+}
+
+function buildHypotheticalChurnPayload(messages, context = {}) {
+  const latest = getLatestUserMessage(messages);
+  const scenarioRate = extractHypotheticalChurnRate(latest);
+  if (scenarioRate === null) return null;
+
+  const normalized = latest.toLowerCase().trim();
+  const dataProfile = getDataProfile(context);
+  const totalRows = dataProfile?.rowCount || getKnownCustomerCount(context);
+
+  if (!totalRows) {
+    return wrapReply(
+      `If churn rate were **${scenarioRate}%**, that would mean **${scenarioRate} out of every 100 customers** are churning. If you share the active customer count, I can convert that into exact churn and retained counts.`
+    );
+  }
+
+  const scenarioChurnCount = Math.round((totalRows * scenarioRate) / 100);
+  const scenarioRetainedCount = Math.max(totalRows - scenarioChurnCount, 0);
+  const observedRate = dataProfile?.target?.positiveRate;
+  const observedChurnCount = dataProfile?.target?.positiveCount;
+  const deltaRate = typeof observedRate === 'number' ? Number((scenarioRate - observedRate).toFixed(1)) : null;
+  const deltaCount =
+    typeof observedChurnCount === 'number' ? scenarioChurnCount - observedChurnCount : null;
+
+  const comparisonLine =
+    deltaRate === null
+      ? ''
+      : `\n\nCompared with the observed baseline of **${observedRate}%**, that is **${deltaRate >= 0 ? '+' : ''}${deltaRate} percentage points**${typeof deltaCount === 'number' ? ` and about **${Math.abs(deltaCount).toLocaleString()} ${deltaCount >= 0 ? 'more' : 'fewer'} churners**` : ''}.`;
+
+  const reply = `If churn rate were **${scenarioRate}%** in the current **${totalRows.toLocaleString()}-row** dataset, that would imply about **${scenarioChurnCount.toLocaleString()} churn records** and **${scenarioRetainedCount.toLocaleString()} retained records**.${comparisonLine}
+
+Commercially, that would indicate a severe churn problem and would justify immediate intervention on the highest-risk, highest-value segments first.`;
+
+  if (!VISUAL_REQUEST_PATTERN.test(normalized)) {
+    return wrapReply(reply);
+  }
+
+  const requestedVisuals = getRequestedVisualTypes(latest);
+  const visuals = requestedVisuals.map((visualType) => {
+    if (visualType === 'table') {
+      return {
+        type: 'table',
+        title: 'Observed vs Hypothetical Churn',
+        columns: ['Metric', 'Observed', 'Hypothetical'],
+        rows: [
+          ['Churn rate %', observedRate != null ? String(observedRate) : 'Not available', String(scenarioRate)],
+          ['Churn count', observedChurnCount != null ? observedChurnCount.toLocaleString() : 'Not available', scenarioChurnCount.toLocaleString()],
+          ['Retained count', dataProfile?.target?.negativeCount != null ? dataProfile.target.negativeCount.toLocaleString() : 'Not available', scenarioRetainedCount.toLocaleString()],
+        ],
+      };
+    }
+
+    if (visualType === 'pie' || visualType === 'donut') {
+      return {
+        type: visualType,
+        title: 'Hypothetical Churn Distribution',
+        description: `Distribution if churn rate rises to ${scenarioRate}% in the active dataset.`,
+        data: [
+          { label: 'Churn', value: scenarioChurnCount },
+          { label: 'Retained', value: scenarioRetainedCount },
+        ],
+      };
+    }
+
+    return {
+      type: visualType === 'column' || visualType === 'line' ? visualType : 'bar',
+      title: 'Churn Rate Comparison',
+      description: 'Observed dataset churn rate versus the hypothetical scenario.',
+      data: [
+        ...(typeof observedRate === 'number' ? [{ label: 'Observed', value: observedRate }] : []),
+        { label: 'Hypothetical', value: scenarioRate },
+      ],
+    };
+  });
+
+  return wrapReply(reply, sanitizeVisuals(visuals).filter(Boolean));
+}
+
 function buildDecisionTreeVisual(context = {}) {
   const companyName = getConsultantIdentity(context).companyName;
 
@@ -457,13 +551,102 @@ function sanitizeVisuals(visuals = []) {
     .slice(0, 3);
 }
 
+function parseStructuredPayloadObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (typeof value.reply !== 'string') return null;
+
+  return {
+    reply: value.reply.trim(),
+    visuals: sanitizeVisuals(value.visuals),
+  };
+}
+
+function extractBalancedJsonObject(text = '', startIndex = 0) {
+  if (text[startIndex] !== '{') return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = startIndex; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === '\\') {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === '{') {
+      depth += 1;
+      continue;
+    }
+
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return {
+          json: text.slice(startIndex, index + 1),
+          endIndex: index + 1,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function normaliseAssistantText(text = '') {
+  return String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function buildFallbackVisualReply(visuals = []) {
+  const primaryType = visuals[0]?.type;
+
+  if (primaryType === 'table') return 'Here is a simple table summary based on the active data.';
+  if (primaryType === 'decision_tree') return 'Here is a simple decision flow you can use for retention actions.';
+  if (primaryType === 'pie' || primaryType === 'donut') return 'Here is a simple distribution view based on the active data.';
+  if (primaryType === 'bar' || primaryType === 'column' || primaryType === 'line') {
+    return 'Here is a simple chart summary based on the active data.';
+  }
+
+  return 'Here is a simple summary based on the active data.';
+}
+
+function buildReadableStructuredReply(payload) {
+  const outerText = normaliseAssistantText([payload.leadingText, payload.trailingText].filter(Boolean).join('\n\n'));
+  if (outerText && !/"reply"\s*:|{"reply"|```json|^\{[\s\S]*\}$/i.test(outerText)) {
+    return outerText;
+  }
+
+  const innerReply = normaliseAssistantText(payload.reply);
+  if (innerReply) {
+    return innerReply;
+  }
+
+  return buildFallbackVisualReply(payload.visuals);
+}
+
 function extractStructuredAssistantPayload(rawReply = '') {
   const trimmed = String(rawReply || '').trim();
   if (!trimmed) return null;
 
   const direct = (() => {
     try {
-      return JSON.parse(trimmed);
+      return parseStructuredPayloadObject(JSON.parse(trimmed));
     } catch {
       return null;
     }
@@ -473,21 +656,54 @@ function extractStructuredAssistantPayload(rawReply = '') {
     const match = trimmed.match(/```json\s*([\s\S]*?)```/i);
     if (!match) return null;
     try {
-      return JSON.parse(match[1]);
+      const parsed = parseStructuredPayloadObject(JSON.parse(match[1]));
+      if (!parsed) return null;
+      return {
+        ...parsed,
+        leadingText: trimmed.slice(0, match.index).trim(),
+        trailingText: trimmed.slice((match.index || 0) + match[0].length).trim(),
+      };
     } catch {
       return null;
     }
   })();
 
-  const parsed = direct || fromCodeFence;
-  if (!parsed || typeof parsed !== 'object') return null;
+  const embedded = (() => {
+    const matches = trimmed.matchAll(/\{\s*"reply"\s*:/g);
 
-  if (typeof parsed.reply !== 'string') return null;
+    for (const match of matches) {
+      const startIndex = match.index ?? -1;
+      if (startIndex < 0) continue;
 
-  return {
-    reply: parsed.reply.trim(),
-    visuals: sanitizeVisuals(parsed.visuals),
-  };
+      const candidate = extractBalancedJsonObject(trimmed, startIndex);
+      if (!candidate) continue;
+
+      try {
+        const parsed = parseStructuredPayloadObject(JSON.parse(candidate.json));
+        if (!parsed) continue;
+
+        return {
+          ...parsed,
+          leadingText: trimmed.slice(0, startIndex).trim(),
+          trailingText: trimmed.slice(candidate.endIndex).trim(),
+        };
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  })();
+
+  if (direct) {
+    return {
+      ...direct,
+      leadingText: '',
+      trailingText: '',
+    };
+  }
+
+  return fromCodeFence || embedded;
 }
 
 function findSummaryColumn(dataProfile, message = '') {
@@ -664,6 +880,9 @@ function buildDataVisualResponse(messages, context = {}) {
 }
 
 function buildLocalPayload(messages, context = {}) {
+  const hypotheticalPayload = buildHypotheticalChurnPayload(messages, context);
+  if (hypotheticalPayload) return hypotheticalPayload;
+
   const visualResponse = buildDataVisualResponse(messages, context);
   if (visualResponse) return visualResponse;
 
@@ -677,6 +896,11 @@ function buildDataQuestionAnswer(messages, context = {}) {
   const dataProfile = getDataProfile(context);
 
   if (!dataProfile) return null;
+
+  const hypotheticalPayload = buildHypotheticalChurnPayload(messages, context);
+  if (hypotheticalPayload?.reply) {
+    return hypotheticalPayload.reply;
+  }
 
   if (CUSTOMER_COUNT_PATTERN.test(normalized)) {
     return `The active dataset currently contains **${dataProfile.rowCount.toLocaleString()} rows**.`;
@@ -728,6 +952,7 @@ Operational mandates & Scope:
 - If the user asks for information outside telecom, business strategy, analytics, or CVM, politely say your specialization is telecom strategy and business analytics.
 - Precision over generalization: never give vague advice. Give specific tactics, decision rules, tradeoffs, and next steps.
 - Treat the supplied dataset summary as the source of truth for questions about rows, columns, churn rate, distributions, averages, and visible patterns.
+- If the user asks a hypothetical or counterfactual question such as "what if", "suppose", or "if churn rate were...", answer that scenario directly and only compare it with the observed dataset when helpful.
 - If the supplied context is insufficient for an exact answer, clearly say what is missing instead of inventing values or benchmarks.
 - When patterns are visible, connect them to commercial meaning, churn mechanism, and retention implications for ${companyName}.
 
@@ -735,6 +960,9 @@ Formatting & Visual Capabilities (CRITICAL):
 - The frontend supports well-formatted prose plus structured visuals.
 - If the user asks for a chart, graph, table, pie chart, donut chart, bar chart, column chart, line chart, or decision tree, and enough context is available, return valid JSON only in this exact shape:
 - {"reply":"short explanation","visuals":[{"type":"pie|donut|bar|column|line|table|decision_tree","title":"...","description":"optional","data":[{"label":"...","value":10}],"columns":["..."],"rows":[["..."]],"tree":{"label":"...","children":[{"label":"..."}]}}]}
+- When you use that structured format, output only the JSON object with no prose before it and no prose after it.
+- Never expose raw JSON, keys, braces, or serialized payloads to the user in conversational text.
+- Keep the \`reply\` value in plain business language that a non-technical user can understand immediately.
 - Do not use emojis, icons, ASCII art, Mermaid, raw HTML, or image markdown to simulate charts.
 - Use only these structured visual types for rendered visuals: \`pie\`, \`donut\`, \`bar\`, \`column\`, \`line\`, \`table\`, or \`decision_tree\`.
 - When using a visual, ensure the values are grounded in the supplied dataset context. Do not invent counts, percentages, categories, or trends.
@@ -942,19 +1170,21 @@ function normaliseAssistantPayload(reply, messages, context = {}) {
 
   const structuredPayload = extractStructuredAssistantPayload(reply);
   if (structuredPayload) {
-    if (!structuredPayload.reply) {
+    const readableReply = buildReadableStructuredReply(structuredPayload);
+
+    if (!readableReply) {
       return wrapReply(buildSafeFallbackReply(messages, context));
     }
 
-    if (looksLikeBadAssistantPayload(structuredPayload.reply)) {
-      if (/\bapi key|configure|restart the dev server\b/i.test(structuredPayload.reply)) {
+    if (looksLikeBadAssistantPayload(readableReply) || looksLikeBadAssistantPayload(structuredPayload.reply)) {
+      if (/\bapi key|configure|restart the dev server\b/i.test(readableReply) || /\bapi key|configure|restart the dev server\b/i.test(structuredPayload.reply)) {
         return wrapReply(SERVICE_UNAVAILABLE_MESSAGE);
       }
       return wrapReply(buildSafeFallbackReply(messages, context));
     }
 
     return {
-      reply: structuredPayload.reply.trim(),
+      reply: readableReply,
       visuals: sanitizeVisuals(structuredPayload.visuals),
     };
   }

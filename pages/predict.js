@@ -103,7 +103,13 @@ export default function PredictPage() {
         mediumRiskDetected: risk === 'medium' ? 1 : 0,
         lowRiskDetected: risk === 'low' ? 1 : 0,
       });
-      pushGlobalStats({ totalPredictions: 1, totalRecordsAnalyzed: 1 });
+      pushGlobalStats({
+        totalPredictions: 1,
+        totalRecordsAnalyzed: 1,
+        highRiskDetected: risk === 'high' ? 1 : 0,
+        mediumRiskDetected: risk === 'medium' ? 1 : 0,
+        lowRiskDetected: risk === 'low' ? 1 : 0,
+      });
       addSessionEvent({ type: 'prediction', mode: 'single', risk });
       toast.success('Prediction complete');
     } catch (err) {
@@ -146,7 +152,13 @@ export default function PredictPage() {
         mediumRiskDetected: data.medium_risk_count || 0,
         lowRiskDetected: data.low_risk_count || 0,
       });
-      pushGlobalStats({ batchFilesProcessed: 1, totalRecordsAnalyzed: data.total_records || 0 });
+      pushGlobalStats({
+        batchFilesProcessed: 1,
+        totalRecordsAnalyzed: data.total_records || 0,
+        highRiskDetected: data.high_risk_count || 0,
+        mediumRiskDetected: data.medium_risk_count || 0,
+        lowRiskDetected: data.low_risk_count || 0,
+      });
       addSessionEvent({ type: 'prediction', mode: 'batch', records: data.total_records });
       toast.success(`Processed ${data.total_records} records`);
     } catch (err) {

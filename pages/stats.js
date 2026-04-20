@@ -70,6 +70,7 @@ export default function StatsPage() {
 
   const stats = globalStats || {};
   const riskTotal = (stats.highRiskDetected || 0) + (stats.mediumRiskDetected || 0) + (stats.lowRiskDetected || 0);
+  const storageMeta = stats._storage || null;
 
   const globalItems = [
     { label: 'Total Predictions', key: 'totalPredictions', icon: Brain, color: 'cyan', subValue: `${stats.batchFilesProcessed || 0} batch files` },
@@ -245,7 +246,11 @@ export default function StatsPage() {
                 </div>
                 <div className="rounded-2xl bg-white/3 px-4 py-3">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">Data source</div>
-                  <div className="mt-1 text-white">Cumulative analytics workspace</div>
+                  <div className="mt-1 text-white">
+                    {storageMeta?.configured
+                      ? `Redis (${storageMeta.provider || 'configured'})`
+                      : 'Redis not configured'}
+                  </div>
                 </div>
               </div>
             </Card>
