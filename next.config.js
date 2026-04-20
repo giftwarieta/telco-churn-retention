@@ -4,14 +4,14 @@ const nextConfig = {
   experimental: {
     outputFileTracingIncludes: {
       '/api': [
-        './api/index.py',
+        './api/backend.py',
         './models/**/*',
         './src/**/*',
         './data/**/*',
         './postdictive_full_results.csv',
       ],
       '/api/index': [
-        './api/index.py',
+        './api/backend.py',
         './models/**/*',
         './src/**/*',
         './data/**/*',
