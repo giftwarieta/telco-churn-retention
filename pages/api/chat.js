@@ -950,6 +950,8 @@ You are a high-level, professional Telecom Strategy Consultant specializing in C
 Operational mandates & Scope:
 - Use telecom, retention, CVM, pricing, and churn-management expertise.
 - Your base training data has a cutoff. If the user asks for recent information, fact-checking, or current events/trends available online, you MUST use the provided 'search_web' tool to fetch the latest data from the internet.
+- INVISIBLE INTEGRATION (CRITICAL): NEVER announce that you are performing a web search, using a tool, or fetching data. NEVER use phrases like "Let me look that up," "According to a quick web search," or "I am checking the internet."
+- Seamlessly and confidently weave the retrieved facts directly into your professional response as if you inherently possessed the up-to-date knowledge.
 - If the user asks for information outside telecom, business strategy, analytics, or CVM, politely say your specialization is telecom strategy and business analytics.
 - Precision over generalization: never give vague advice. Give specific tactics, decision rules, tradeoffs, and next steps.
 - Treat the supplied dataset summary as the source of truth for questions about rows, columns, churn rate, distributions, averages, and visible patterns.
@@ -1251,7 +1253,30 @@ export default async function handler(req, res) {
     }
 
     const modelName = getGroqModelName();
-    const response = await fetch(getGroqEndpoint(), {
+    
+    // 1. Define the Web Search Tool for the LLM
+    const tools = [
+      {
+        type: "function",
+        function: {
+          name: "search_web",
+          description: "Search the web for up-to-date information, news, facts, and recent data to ground your answer.",
+          parameters: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: "The targeted search query."
+              }
+            },
+            required: ["query"]
+          }
+        }
+      }
+    ];
+
+    // 2. Initial Request to Groq (Providing tools)
+    let response = await fetch(getGroqEndpoint(), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${groqApiKey}`,
@@ -1262,6 +1287,8 @@ export default async function handler(req, res) {
         temperature: 0.2,
         stream: false,
         messages: groqMessages,
+        tools: tools,
+        tool_choice: "auto"
       }),
       signal: AbortSignal.timeout(40000),
     });
@@ -1277,7 +1304,64 @@ export default async function handler(req, res) {
       });
     }
 
-    const data = await response.json();
+    let data = await response.json();
+    let responseMessage = data.choices?.[0]?.message;
+
+    // 3. INTERCEPT: Check if model decided it needs to use the web search tool
+    if (responseMessage?.tool_calls?.length > 0) {
+      
+      // STRICT OVERRIDE: If the model tried to "think out loud" (e.g., "Let me check the web..."),
+      // we delete that text immediately so it doesn't pollute the chat history or final answer.
+      if (responseMessage.content) {
+        responseMessage.content = null;
+      }
+      
+      // Append the clean tool call request to the message history
+      groqMessages.push(responseMessage);
+      
+      // Execute the requested web searches
+      for (const toolCall of responseMessage.tool_calls) {
+        if (toolCall.function.name === 'search_web') {
+          let searchResults;
+          try {
+            const args = JSON.parse(toolCall.function.arguments);
+            searchResults = await performWebSearch(args.query);
+          } catch (err) {
+            searchResults = { error: "Failed to parse query or execute search." };
+          }
+          
+          // Append the live web data back to the conversation history
+          groqMessages.push({
+            tool_call_id: toolCall.id,
+            role: "tool",
+            name: "search_web",
+            content: JSON.stringify(searchResults)
+          });
+        }
+      }
+      
+      // 4. Send the newly grounded information back to the model for a final resolution
+      response = await fetch(getGroqEndpoint(), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${groqApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: modelName,
+          temperature: 0.2,
+          stream: false,
+          messages: groqMessages
+          // We do NOT pass tools here, forcing it to formulate the final user answer
+        }),
+        signal: AbortSignal.timeout(40000),
+      });
+
+      if (!response.ok) throw new Error("Failed secondary Groq tool resolution");
+      data = await response.json();
+    }
+
+    // 5. Extract the final conversational response
     const reply = extractGroqReply(data);
     const payload = normaliseAssistantPayload(reply, messages, context);
 
