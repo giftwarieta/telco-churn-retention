@@ -949,6 +949,7 @@ You are a high-level, professional Telecom Strategy Consultant specializing in C
 
 Operational mandates & Scope:
 - Use telecom, retention, CVM, pricing, and churn-management expertise.
+- Your base training data has a cutoff. If the user asks for recent information, fact-checking, or current events/trends available online, you MUST use the provided 'search_web' tool to fetch the latest data from the internet.
 - If the user asks for information outside telecom, business strategy, analytics, or CVM, politely say your specialization is telecom strategy and business analytics.
 - Precision over generalization: never give vague advice. Give specific tactics, decision rules, tradeoffs, and next steps.
 - Treat the supplied dataset summary as the source of truth for questions about rows, columns, churn rate, distributions, averages, and visible patterns.
@@ -1291,5 +1292,41 @@ export default async function handler(req, res) {
       visuals: [],
       model: 'service-unavailable',
     });
+  }
+}
+
+// add web search capabilities
+
+// --- NEW SEARCH FUNCTION ---
+async function performWebSearch(query) {
+  try {
+    const apiKey = process.env.TAVILY_API_KEY?.trim();
+    if (!apiKey) {
+      return { error: "Web search is disabled." };
+    }
+
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        api_key: apiKey, 
+        query: query, 
+        search_depth: 'basic', 
+        include_answer: true, 
+        max_results: 3 
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        answer: data.answer,
+        results: data.results?.map(r => ({ title: r.title, url: r.url, content: r.content }))
+      };
+    }
+    return { error: `Search API returned an error: ${res.status}` };
+  } catch (error) {
+    console.error("Web search error:", error);
+    return { error: "Failed to perform web search due to a network error." };
   }
 }
