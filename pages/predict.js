@@ -67,12 +67,8 @@ function BackendError({ message }) {
         </div>
         <div>
           <p className="text-sm font-semibold text-amber-400 mb-1">Prediction service unavailable</p>
-          <p className="text-xs text-slate-400 leading-relaxed mb-3">
-            Try again later.
-            {/* {message || 'The FastAPI backend is not running. Start it locally to enable live predictions.'} */}
-          </p>
           <div className="rounded-xl bg-[#0D1526] border border-[#1E2D45] px-4 py-3 font-mono text-xs text-slate-400">
-            Kindly contact the developer.
+            Try again later. If it persists, kindly contact the developer.
           </div>
         </div>
       </div>

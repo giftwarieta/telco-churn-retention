@@ -123,11 +123,104 @@ export default function HomePage() {
     typeof workspaceContext.customerCount === 'number' && workspaceContext.customerCount > 0
       ? workspaceContext.customerCount.toLocaleString()
       : 'Pending';
+  const renderChoosePathCard = (className = '') => (
+    <Card className={`mx-auto my-auto w-full max-w-xl p-5 text-center sm:p-6 lg:mx-0 lg:text-left ${className}`.trim()}>
+      <div className="mb-4 flex items-center justify-center gap-3 lg:justify-start">
+        <div className="rounded-2xl bg-sky-500/10 p-3">
+          <Rocket className="h-6 w-6 text-sky-500" />
+        </div>
+        <div>
+          <h2 className="font-display text-lg font-semibold text-white">Choose Your Path</h2>
+          <p className="text-sm text-slate-500">Select the working route and make it obvious what data and model context are active.</p>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-[color:var(--border)] bg-white/3 p-4">
+        <div className="flex flex-wrap items-start justify-center gap-3 text-center lg:justify-between lg:text-left">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Current route</div>
+            <div className="mt-2 text-lg font-semibold text-white">{routeLabel}</div>
+            <p className="mt-1 text-sm leading-relaxed text-slate-400">{routeDescription}</p>
+          </div>
+          <Badge color={dataSource === 'custom' ? 'purple' : 'cyan'}>
+            {dataSource === 'custom' ? 'Custom session' : 'Default active'}
+          </Badge>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          <button
+            type="button"
+            onClick={handleChooseDefaultPath}
+            className={`w-full rounded-3xl border p-4 text-left transition-all sm:p-4 ${
+              dataSource === 'default'
+                ? 'border-sky-500/35 bg-sky-500/10 shadow-[0_0_0_1px_rgba(14,165,233,0.08)]'
+                : 'border-[color:var(--border)] bg-white/3 hover:border-sky-500/25 hover:bg-sky-500/6'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div className="rounded-2xl bg-sky-500/12 p-3">
+                <Database className="h-5 w-5 text-sky-400" />
+              </div>
+              <div className="flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-sm font-semibold text-white">Use Default Expert Model</div>
+                  {dataSource === 'default' && <Badge color="cyan">Current</Badge>}
+                </div>
+                <div className="mt-1 text-xs leading-relaxed text-slate-400">
+                  Move straight into the built-in IBM Telco workflow with the default model and ready-made insights.
+                </div>
+              </div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleChooseCustomPath}
+            className={`w-full rounded-3xl border p-4 text-left transition-all sm:p-4 ${
+              dataSource === 'custom'
+                ? 'border-purple-500/35 bg-purple-500/10 shadow-[0_0_0_1px_rgba(168,85,247,0.08)]'
+                : 'border-[color:var(--border)] bg-white/3 hover:border-purple-500/25 hover:bg-purple-500/6'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div className="rounded-2xl bg-purple-500/12 p-3">
+                <FileUp className="h-5 w-5 text-purple-400" />
+              </div>
+              <div className="flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-sm font-semibold text-white">Setup Personalized Training</div>
+                  {dataSource === 'custom' && <Badge color="purple">Current</Badge>}
+                </div>
+                <div className="mt-1 text-xs leading-relaxed text-slate-400">
+                  Upload your own CSV, train a session model, and keep insights aligned to your temporary working dataset.
+                </div>
+              </div>
+            </div>
+          </button>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg-soft)] p-4">
+          <div className="flex flex-col items-center justify-between gap-3 text-center sm:flex-row sm:text-left">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Workspace guide</div>
+              <div className="mt-1 text-sm font-medium text-white">Pick a route, confirm the model context, then move into prediction or training.</div>
+            </div>
+            <Button variant="ghost" size="sm" icon={RefreshCcw} onClick={handleChangeDataRoute}>
+              Change route
+            </Button>
+          </div>
+          <div className="mt-3 text-xs leading-relaxed text-slate-500">
+            The overview is designed as your starting point, while detailed analytics live in the dedicated pages across the app.
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
 
   return (
     <Layout title="Overview">
       <section className="mb-8 flex min-h-[calc(100svh-7rem)] flex-col justify-center gap-4 lg:grid lg:min-h-0 lg:grid-cols-[1.2fr_0.9fr] lg:gap-6">
-        <Card className="order-2 mx-auto w-full max-w-4xl overflow-hidden p-5 text-center sm:p-8 lg:order-1 lg:mx-0 lg:text-left">
+        <Card className="mx-auto w-full max-w-4xl overflow-hidden p-5 text-center sm:p-8 lg:mx-0 lg:text-left">
           <div className="mb-4 flex flex-wrap items-center justify-center gap-2 lg:justify-start">
             <Badge color="cyan">Modern retention workspace</Badge>
             <Badge color="amber">Responsive dashboard</Badge>
@@ -184,98 +277,7 @@ export default function HomePage() {
             </Link>
           </div>
         </Card>
-
-        <Card className="order-1 mx-auto my-auto w-full max-w-xl p-5 text-center sm:p-6 lg:order-2 lg:mx-0 lg:text-left">
-          <div className="mb-4 flex items-center justify-center gap-3 lg:justify-start">
-            <div className="rounded-2xl bg-sky-500/10 p-3">
-              <Rocket className="h-6 w-6 text-sky-500" />
-            </div>
-            <div>
-              <h2 className="font-display text-lg font-semibold text-white">Choose Your Path</h2>
-              <p className="text-sm text-slate-500">Select the working route and make it obvious what data and model context are active.</p>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-[color:var(--border)] bg-white/3 p-4">
-            <div className="flex flex-wrap items-start justify-center gap-3 text-center lg:justify-between lg:text-left">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Current route</div>
-                <div className="mt-2 text-lg font-semibold text-white">{routeLabel}</div>
-                <p className="mt-1 text-sm leading-relaxed text-slate-400">{routeDescription}</p>
-              </div>
-              <Badge color={dataSource === 'custom' ? 'purple' : 'cyan'}>
-                {dataSource === 'custom' ? 'Custom session' : 'Default active'}
-              </Badge>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              <button
-                type="button"
-                onClick={handleChooseDefaultPath}
-                className={`w-full rounded-3xl border p-4 text-left transition-all sm:p-4 ${
-                  dataSource === 'default'
-                    ? 'border-sky-500/35 bg-sky-500/10 shadow-[0_0_0_1px_rgba(14,165,233,0.08)]'
-                    : 'border-[color:var(--border)] bg-white/3 hover:border-sky-500/25 hover:bg-sky-500/6'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="rounded-2xl bg-sky-500/12 p-3">
-                    <Database className="h-5 w-5 text-sky-400" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="text-sm font-semibold text-white">Use Default Expert Model</div>
-                      {dataSource === 'default' && <Badge color="cyan">Current</Badge>}
-                    </div>
-                    <div className="mt-1 text-xs leading-relaxed text-slate-400">
-                      Move straight into the built-in IBM Telco workflow with the default model and ready-made insights.
-                    </div>
-                  </div>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleChooseCustomPath}
-                className={`w-full rounded-3xl border p-4 text-left transition-all sm:p-4 ${
-                  dataSource === 'custom'
-                    ? 'border-purple-500/35 bg-purple-500/10 shadow-[0_0_0_1px_rgba(168,85,247,0.08)]'
-                    : 'border-[color:var(--border)] bg-white/3 hover:border-purple-500/25 hover:bg-purple-500/6'
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="rounded-2xl bg-purple-500/12 p-3">
-                    <FileUp className="h-5 w-5 text-purple-400" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="text-sm font-semibold text-white">Setup Personalized Training</div>
-                      {dataSource === 'custom' && <Badge color="purple">Current</Badge>}
-                    </div>
-                    <div className="mt-1 text-xs leading-relaxed text-slate-400">
-                      Upload your own CSV, train a session model, and keep insights aligned to your temporary working dataset.
-                    </div>
-                  </div>
-                </div>
-              </button>
-            </div>
-
-            <div className="mt-4 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg-soft)] p-4">
-              <div className="flex flex-col items-center justify-between gap-3 text-center sm:flex-row sm:text-left">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Workspace guide</div>
-                  <div className="mt-1 text-sm font-medium text-white">Pick a route, confirm the model context, then move into prediction or training.</div>
-                </div>
-                <Button variant="ghost" size="sm" icon={RefreshCcw} onClick={handleChangeDataRoute}>
-                  Change route
-                </Button>
-              </div>
-              <div className="mt-3 text-xs leading-relaxed text-slate-500">
-                The overview is designed as your starting point, while detailed analytics live in the dedicated pages across the app.
-              </div>
-            </div>
-          </div>
-        </Card>
+        {renderChoosePathCard('hidden lg:block')}
       </section>
 
       <section className="mb-6 grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
@@ -352,6 +354,10 @@ export default function HomePage() {
             ))}
           </div>
         </Card>
+      </section>
+
+      <section className="mb-6 lg:hidden">
+        {renderChoosePathCard()}
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
