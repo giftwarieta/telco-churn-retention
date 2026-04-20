@@ -423,7 +423,7 @@ function MessageBubble({ msg }) {
         )}
       </div>
 
-      <div className={`group flex max-w-[88%] flex-col gap-1 sm:max-w-[82%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+      <div className={`min-w-0 group flex max-w-[88%] flex-col gap-1 sm:max-w-[82%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
         <div
           className={`${
             msg.role === 'user'
@@ -431,9 +431,9 @@ function MessageBubble({ msg }) {
               : isError
                 ? 'rounded-2xl border border-rose-500/20 bg-rose-500/10 px-4 py-3'
                 : 'chat-assistant'
-          } px-4 py-3`}
+          } w-full overflow-hidden px-4 py-3`}
         >
-          <p className={`whitespace-pre-wrap text-sm leading-relaxed ${isError ? 'text-rose-300' : 'text-slate-200'}`}>
+          <p className={`whitespace-pre-wrap break-words text-sm leading-relaxed ${isError ? 'text-rose-300' : 'text-slate-200'}`}>
             {msg.content}
           </p>
           {!isError && Array.isArray(msg.visuals) && msg.visuals.length > 0 ? <ChatVisuals visuals={msg.visuals} /> : null}
@@ -670,7 +670,7 @@ export default function ConsultantPage() {
             </Card>
           )}
 
-          <Card className="p-4 sm:p-5">
+          <Card className="hidden p-4 sm:p-5 lg:block">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Active Workspace</div>
               <Badge color={workspaceContext.dataSource === 'custom' ? 'purple' : 'cyan'}>
@@ -698,7 +698,7 @@ export default function ConsultantPage() {
             </p>
           </Card>
 
-          <Card className="p-4 sm:p-5">
+          <Card className="hidden p-4 sm:p-5 lg:block">
             <div className="mb-3 flex items-center gap-2">
               <Database className="h-4 w-4 text-emerald-400" />
               <span className="text-sm font-semibold text-white">Data snapshot</span>
@@ -728,7 +728,7 @@ export default function ConsultantPage() {
           </Card>
         </div>
 
-        <Card className="order-1 flex h-[calc(100svh-3.85rem)] min-h-0 max-h-[calc(100svh-3.85rem)] flex-col overflow-hidden p-0 lg:order-2 lg:h-[calc(100svh-6.5rem)] lg:max-h-[calc(100svh-6.5rem)]">
+        <Card className="order-1 flex h-[calc(100svh-8.5rem)] min-h-0 max-h-[calc(100svh-8.5rem)] flex-col overflow-hidden p-0 sm:h-[calc(100svh-7.5rem)] sm:max-h-[calc(100svh-7.5rem)] lg:order-2 lg:h-[calc(100svh-6rem)] lg:max-h-[calc(100svh-6rem)]">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--border)] px-4 py-4 sm:px-5">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 overflow-hidden rounded-full border border-emerald-500/20 bg-emerald-500/12">
@@ -748,6 +748,17 @@ export default function ConsultantPage() {
               <Button icon={Trash2} variant="ghost" size="sm" onClick={handleClearChat}>
                 Clear
               </Button>
+            )}
+
+            {profileReady && (
+              <div className="flex w-full flex-wrap gap-2 lg:hidden">
+                <Badge color={workspaceContext.dataSource === 'custom' ? 'purple' : 'cyan'}>
+                  {workspaceContext.dataSource === 'custom' ? 'Custom session' : 'Default workspace'}
+                </Badge>
+                <Badge color="emerald">
+                  {dataSummary?.rowCount ? `${formatNumber(dataSummary.rowCount)} rows` : workspaceContext.modelLabel}
+                </Badge>
+              </div>
             )}
           </div>
 

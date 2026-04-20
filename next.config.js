@@ -3,7 +3,15 @@ const nextConfig = {
   reactStrictMode: true,
   experimental: {
     outputFileTracingIncludes: {
-      '/api/backend': [
+      '/api': [
+        './api/index.py',
+        './models/**/*',
+        './src/**/*',
+        './data/**/*',
+        './postdictive_full_results.csv',
+      ],
+      '/api/index': [
+        './api/index.py',
         './models/**/*',
         './src/**/*',
         './data/**/*',

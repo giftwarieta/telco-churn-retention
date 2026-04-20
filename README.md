@@ -1,7 +1,7 @@
 # ChurnAI Pro v1 - Next.js + Vercel Python
 
 Telco churn prediction platform rebuilt from Streamlit to Next.js for Vercel deployment.
-It keeps the existing `src/` processing logic and now ships a built-in Python backend for Vercel under `api/backend.py`.
+It keeps the existing `src/` processing logic and now ships a built-in Python backend for Vercel directly in `api/index.py`.
 
 ## Architecture
 
@@ -13,7 +13,8 @@ Frontend (Next.js -> Vercel)
   styles/         -> Global CSS + design tokens
 
 Backend (Vercel Python Function)
-  api/backend.py  -> FastAPI app served at /api/backend/*
+  api/index.py    -> Vercel Python entrypoint and FastAPI app served at /api/*
+  api/backend.py  -> Compatibility wrapper that re-exports from api/index.py
   src/            -> Reused preprocessing helpers
   models/         -> Pretrained model artifacts deployed with the app
   data/           -> Optional datasets for offline retraining only
@@ -44,11 +45,11 @@ uvicorn app_fastapi:app --reload --port 8000
 3. Leave `NEXT_PUBLIC_API_URL` unset if you want to use the built-in Python backend.
 4. Deploy.
 
-The frontend will call `/api/backend` automatically on Vercel.
+The frontend will call `/api` automatically on Vercel.
 
 ## Serverless model strategy
 
-- Prediction, batch scoring, explainability, metrics, ROI, and health run inside `api/backend.py`.
+- Prediction, batch scoring, explainability, metrics, ROI, and health now run directly from `api/index.py`.
 - Model loading is lazy and cached per warm function instance.
 - Custom-data training now runs as an evaluation flow from the uploaded session CSV and returns model metrics plus confusion-matrix output to the UI.
 - Session training is not persisted as a deployed model artifact. To replace the production model, retrain offline and redeploy refreshed files in `models/`.
