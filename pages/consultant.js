@@ -767,6 +767,30 @@ export default function ConsultantPage() {
 
   const profileReady = Boolean(consultantProfileState.userName && consultantProfileState.companyName);
 
+  // --- NEW: Smart Body Scrolling Lock ---
+  // Locks the body scroll ONLY on mobile/tablet view. Desktop users can still scroll normally.
+  useEffect(() => {
+    const handleResize = () => {
+      // lg breakpoint in tailwind is 1024px. Below this, we assume mobile/tablet app-like view
+      if (window.innerWidth < 1024) {
+        document.body.classList.add('overflow-hidden');
+        document.documentElement.classList.add('overflow-hidden');
+      } else {
+        document.body.classList.remove('overflow-hidden');
+        document.documentElement.classList.remove('overflow-hidden');
+      }
+    };
+
+    handleResize(); // Run immediately on mount
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      document.body.classList.remove('overflow-hidden');
+      document.documentElement.classList.remove('overflow-hidden');
+    };
+  }, []);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages, loading]);
@@ -929,7 +953,7 @@ export default function ConsultantPage() {
     : messages.filter((message) => message.role === 'user' || message.isError);
 
   return (
-    <Layout title="AI Consultant">
+    <Layout title="AI Consultant" hideFooter={true}>
       <div className="hidden sm:block">
         <SectionHeader
           title="AI Business Consultant"
@@ -939,9 +963,9 @@ export default function ConsultantPage() {
         />
       </div>
 
-      <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[0.95fr_2.05fr] lg:items-start lg:gap-6">
-        <div className="order-2 space-y-4 lg:order-1">
-          <Card className="hidden p-4 sm:p-5 lg:block">
+      <div className="flex flex-col lg:grid lg:grid-cols-[0.95fr_2.05fr] lg:items-start lg:gap-6">
+        <div className="hidden lg:order-1 lg:flex lg:flex-col lg:gap-4">
+          <Card className="p-4 sm:p-5">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Active Workspace</div>
               <Badge color={workspaceContext.dataSource === 'custom' ? 'purple' : 'cyan'}>
@@ -969,7 +993,7 @@ export default function ConsultantPage() {
             </p>
           </Card>
 
-          <Card className="hidden p-4 sm:p-5 lg:block">
+          <Card className="p-4 sm:p-5">
             <div className="mb-3 flex items-center gap-2">
               <Database className="h-4 w-4 text-emerald-400" />
               <span className="text-sm font-semibold text-white">Data snapshot</span>
@@ -999,8 +1023,10 @@ export default function ConsultantPage() {
           </Card>
         </div>
 
-        <Card className="order-1 flex h-[calc(100svh-14rem)] min-h-0 max-h-[calc(100svh-14rem)] flex-col overflow-hidden p-0 sm:h-[calc(100svh-5.75rem)] sm:max-h-[calc(100svh-5.75rem)] lg:order-2 lg:h-[calc(100svh-3rem)] lg:max-h-[calc(100svh-3rem)]">
-          <div className="border-b border-[color:var(--border)] px-3 py-3 sm:px-5 sm:py-4">
+        {/* --- FIXED MOBILE HEIGHT (100svh-11rem) & MIN-H-0 --- */}
+        <Card className="order-1 mx-auto flex h-[calc(100svh-11rem)] min-h-0 w-full max-w-4xl flex-col overflow-hidden p-0 sm:h-[calc(100svh-5.75rem)] lg:order-2 lg:h-[calc(100svh-3rem)]">
+          
+          <div className="z-10 shrink-0 border-b border-[color:var(--border)] bg-[color:var(--bg-card)] px-3 py-3 sm:px-5 sm:py-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
                 <div className="h-9 w-9 overflow-hidden rounded-full border border-emerald-500/20 bg-emerald-500/12 sm:h-10 sm:w-10">
@@ -1042,7 +1068,7 @@ export default function ConsultantPage() {
             )}
           </div>
 
-          <div className="consultant-chat-scroll min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-5 sm:py-4">
+          <div className="consultant-chat-scroll flex-1 min-h-0 overflow-y-auto px-3 py-3 sm:px-5 sm:py-4">
             <div className="space-y-4">
               {!profileReady ? (
                 <ConsultantSetupCard
@@ -1081,7 +1107,7 @@ export default function ConsultantPage() {
             </div>
           </div>
 
-          <div className="shrink-0 border-t border-[color:var(--border)] bg-[color:var(--bg-card-strong)] px-4 py-3 sm:px-5">
+          <div className="z-10 shrink-0 border-t border-[color:var(--border)] bg-[color:var(--bg-card-strong)] px-4 py-3 sm:px-5">
             <div className="mb-2 hidden items-center gap-2 text-xs text-slate-500 sm:flex">
               <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
               Ask questions about the active data, or tap a prompt below to get started quickly.
@@ -1101,7 +1127,7 @@ export default function ConsultantPage() {
                 }
                 rows={1}
                 disabled={!profileReady}
-                className="input-field min-h-[46px] max-h-[132px] flex-1 resize-none rounded-2xl px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[50px] sm:py-3"
+                className="input-field min-h-[46px] max-h-[132px] flex-1 resize-none rounded-2xl px-4 py-2.0 text-sm disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[50px] sm:py-3"
               />
               <Button
                 icon={Send}
@@ -1119,21 +1145,23 @@ export default function ConsultantPage() {
                 <Lightbulb className="h-4 w-4 text-amber-500" />
                 <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Suggested prompts</span>
               </div>
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              
+              <div className="flex w-full gap-2 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {QUICK_PROMPTS.map((item) => (
                   <button
                     key={item.label}
                     onClick={() => sendMessage(item.prompt)}
                     disabled={loading || !profileReady}
                     type="button"
-                    className="rounded-2xl border border-transparent bg-white/3 px-3 py-3 text-left transition-all duration-200 hover:border-sky-500/20 hover:bg-sky-500/8 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="w-[240px] shrink-0 rounded-xl border border-transparent bg-white/3 px-3 py-2.5 text-left transition-all duration-200 hover:border-sky-500/20 hover:bg-sky-500/8 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <div className="mb-1 text-sm font-medium text-slate-300">{item.label}</div>
-                    <div className="line-clamp-2 text-xs leading-relaxed text-slate-500">{item.prompt}</div>
+                    <div className="mb-0.5 text-[13px] font-medium text-slate-300">{item.label}</div>
+                    <div className="line-clamp-2 text-[11px] leading-snug text-slate-500">{item.prompt}</div>
                   </button>
                 ))}
               </div>
             </div>
+
           </div>
         </Card>
       </div>
