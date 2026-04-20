@@ -55,8 +55,11 @@ export default function AboutPage() {
         <nav className="sticky top-0 z-50 border-b border-[#1E2D45]/60 bg-[#070E1A]/90 backdrop-blur-md">
           <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3.5">
             <Link href="/" className="flex items-center gap-2.5">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500/15 text-sm font-bold text-sky-400">C</span>
-              <span className="font-semibold text-sm text-white">ChurnIQ</span>
+              
+              <div>
+                <div className="font-display text-base font-bold text-white">ChurnIQ</div>
+                <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Telco Churn Modelling</div>
+              </div>
             </Link>
             <Link href="/" className="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1.5">
               ← Back to dashboard
@@ -200,7 +203,8 @@ export default function AboutPage() {
 
         {/* Footer */}
         <footer className="border-t border-[#1E2D45]/60 py-6 text-center text-xs text-slate-600">
-          © {new Date().getFullYear()} Warieta Gift Ejovwoke.
+          © {new Date().getFullYear()} <a href="https://giftwarieta.com.ng" target="_blank" rel="noreferrer" className="font-semibold text-white underline decoration-sky-500/40 underline-offset-4 hover:text-sky-500">Warieta Gift Ejovwoke</a>.
+          <p>Personal project focused on churn prediction, retention strategy, and explainable analytics.</p>
         </footer>
       </div>
     </>

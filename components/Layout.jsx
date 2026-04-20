@@ -182,12 +182,9 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
           <div className="border-b border-[color:var(--border)] px-5 py-5">
             <div className="flex items-start justify-between gap-3">
               <Link href="/" className="flex items-center gap-3">
-                <div className={`brand-mark ${theme === 'light' ? 'brand-mark-light' : 'brand-mark-dark'}`}>
-                  <Activity className="h-5 w-5 text-white" />
-                </div>
                 <div>
                   <div className="font-display text-lg font-bold tracking-tight text-white">ChurnIQ</div>
-                  <div className="text-[11px] uppercase tracking-[0.28em] text-slate-500">Retention Studio</div>
+                  <div className="text-[11px] uppercase tracking-[0.28em] text-slate-500">Telco Churn Modelling</div>
                 </div>
               </Link>
             </div>
@@ -240,24 +237,15 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
             <div className="mb-3">
               <DataSourceChip />
             </div>
-            <div className="rounded-3xl border border-[color:var(--border)] bg-[color:var(--bg-soft)] p-4">
-              <div className="text-xs uppercase tracking-[0.22em] text-slate-500">Builder</div>
-              <p className="mt-2 text-sm leading-relaxed text-slate-400">
-                Personal project by <a href="https://giftwarieta.com.ng" target="_blank" rel="noreferrer" className="font-semibold text-white underline decoration-sky-500/40 underline-offset-4 hover:text-sky-500">Warieta Gift Ejovwoke</a>.
-              </p>
-            </div>
           </div>
         </aside>
 
         <div className="relative z-10 flex min-h-screen flex-col lg:ml-72">
           <header className="app-topbar sticky top-0 z-30 lg:hidden">
             <Link href="/" className="flex items-center gap-3">
-              <div className={`brand-mark brand-mark-sm ${theme === 'light' ? 'brand-mark-light' : 'brand-mark-dark'}`}>
-                <Activity className="h-4 w-4 text-white" />
-              </div>
               <div>
                 <div className="font-display text-base font-bold text-white">ChurnIQ</div>
-                <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Retention Studio</div>
+                <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Telco Churn Modelling</div>
               </div>
             </Link>
 
@@ -270,11 +258,9 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
             </div>
           </main>
 
-          <footer className="border-t border-[color:var(--border)] px-4 pb-28 pt-5 sm:px-6 lg:px-8 lg:pb-6">
-            <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-2 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-              <p>Built by <a href="https://giftwarieta.com.ng" target="_blank" rel="noreferrer" className="font-semibold text-white underline decoration-sky-500/40 underline-offset-4 hover:text-sky-500">Warieta Gift Ejovwoke</a>.</p>
-              <p>Personal project focused on churn prediction, retention strategy, and explainable analytics.</p>
-            </div>
+          <footer className="border-t border-[#1E2D45]/60 py-6 text-center text-xs text-slate-600">
+            © {new Date().getFullYear()} <a href="https://giftwarieta.com.ng" target="_blank" rel="noreferrer" className="font-semibold text-white underline decoration-sky-500/40 underline-offset-4 hover:text-sky-500">Warieta Gift Ejovwoke</a>.
+            <p>Personal project focused on churn prediction, retention strategy, and explainable analytics.</p>
           </footer>
         </div>
 
