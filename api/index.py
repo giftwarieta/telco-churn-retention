@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import io
@@ -12,7 +11,7 @@ from typing import Any, Optional
 import joblib
 import numpy as np
 import pandas as pd
-from fastapi import Body, FastAPI, File, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, HTTPException, UploadFile, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sklearn.compose import ColumnTransformer
@@ -96,7 +95,6 @@ TRAINING_HELPERS_AVAILABLE = False
 
 try:
     from src.processor import clean_and_prepare, engineer_features, get_features
-
     PROCESSOR_AVAILABLE = True
 except Exception:
     clean_and_prepare = None
@@ -110,7 +108,6 @@ try:
         save_training_artifacts,
         train_churn_pipeline,
     )
-
     TRAINING_HELPERS_AVAILABLE = True
 except Exception:
     engineer_telco_features = None
@@ -121,6 +118,9 @@ except Exception:
 SRC_AVAILABLE = PROCESSOR_AVAILABLE or TRAINING_HELPERS_AVAILABLE
 
 
+# ---------------------------------------------------------
+# FASTAPI APP INITIALIZATION
+# ---------------------------------------------------------
 app = FastAPI(
     title="ChurnIQ Vercel Backend",
     description="Serverless churn prediction backend for the ChurnIQ dashboard.",
@@ -135,7 +135,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------
+# VERCEL ROUTER - Crucial for preventing 404s
+# ---------------------------------------------------------
+router = APIRouter(prefix="/api")
 
+
+# ---------------------------------------------------------
+# DATA MODELS
+# ---------------------------------------------------------
 class CustomerData(BaseModel):
     gender: str = "Male"
     SeniorCitizen: str = "0"
@@ -181,6 +189,9 @@ def model_to_dict(model: BaseModel) -> dict[str, Any]:
     return model.dict()
 
 
+# ---------------------------------------------------------
+# HELPER FUNCTIONS
+# ---------------------------------------------------------
 def _find_model_path() -> Path:
     if DEFAULT_MODEL_PATH.exists():
         return DEFAULT_MODEL_PATH
@@ -697,8 +708,10 @@ def _load_metrics() -> list[dict[str, Any]]:
     ]
 
 
-@app.get("/health")
-@app.get("/api/health")
+# ---------------------------------------------------------
+# API ENDPOINTS (Using @router to prevent Vercel 404s)
+# ---------------------------------------------------------
+@router.get("/health")
 def health_check():
     model_loaded = True
     try:
@@ -708,14 +721,16 @@ def health_check():
         model_loaded = False
 
     return {
-        "message": "Telco CHurnIQ API is Live!",
+        "message": "Telco ChurnIQ API is Live!",
         "developed by": "Warieta Gift Ejovwoke for practice",
+        "status": "ok" if model_loaded else "degraded",
+        "model_loaded": model_loaded,
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "version": app.version,
     }
 
 
-@app.get("/")
+@router.get("/")
 def root():
     return {
         "status": "ok",
@@ -724,7 +739,7 @@ def root():
     }
 
 
-@app.get("/model/info")
+@router.get("/model/info")
 def model_info():
     try:
         model = get_model()
@@ -733,71 +748,60 @@ def model_info():
     except Exception:
         raise HTTPException(status_code=503, detail="A trained model is not available in this deployment.")
 
-    estimator = model.named_steps["model"] if hasattr(model, "named_steps") else model
-
     info = {
         "model_type": type(model).__name__,
-        "resolved_model_type": estimator.__class__.__name__,
-        "feature_count": len(metadata.get("raw_feature_names") or RAW_FEATURE_COLUMNS),
-        "transformed_feature_count": len(feature_names),
+        "feature_count": len(feature_names),
         "training_supported": True,
         "src_available": SRC_AVAILABLE,
-        "decision_threshold": metadata.get("decision_threshold", 0.5),
+        "metadata": metadata,
     }
 
-    if hasattr(estimator, "n_estimators"):
-        info["n_estimators"] = estimator.n_estimators
+    if hasattr(model, "n_estimators"):
+        info["n_estimators"] = model.n_estimators
 
     return info
 
 
-@app.get("/model/metrics")
+@router.get("/model/metrics")
 def model_metrics():
     return {"metrics": _load_metrics()}
 
 
-@app.post("/predict")
+@router.post("/predict")
 def predict(customer: CustomerData):
     try:
         model = get_model()
-        metadata = get_model_metadata()
         features = prepare_features(pd.DataFrame([model_to_dict(customer)]))
         probability = _prediction_probability(model, features)
     except FileNotFoundError:
         raise HTTPException(status_code=503, detail="A trained model is not available in this deployment.")
-    except Exception as exc:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Prediction failed: {exc}")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Prediction could not be completed right now.")
 
-    threshold = float(metadata.get("decision_threshold", 0.5))
-    prediction = int(probability >= threshold)
+    prediction = int(probability >= 0.5)
     return {
         "churn_probability": round(probability, 4),
         "churn_prediction": prediction,
         "risk_level": get_risk_level(probability),
         "confidence": round(max(probability, 1 - probability), 4),
         "top_factors": _local_impacts(model, features),
-        "decision_threshold": threshold,
     }
 
 
-@app.post("/predict/batch")
+@router.post("/predict/batch")
 async def predict_batch(file: UploadFile = File(...)):
     try:
         model = get_model()
-        metadata = get_model_metadata()
         content = await file.read()
         raw = pd.read_csv(io.StringIO(content.decode("utf-8")))
         features = prepare_features(raw)
         probabilities = model.predict_proba(features)[:, 1]
     except FileNotFoundError:
         raise HTTPException(status_code=503, detail="A trained model is not available in this deployment.")
-    except Exception as exc:
-        traceback.print_exc()
-        raise HTTPException(status_code=400, detail=f"Batch prediction failed: {exc}")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Batch prediction failed. Check that the uploaded CSV uses the expected columns.")
 
-    threshold = float(metadata.get("decision_threshold", 0.5))
-    predictions = (probabilities >= threshold).astype(int)
+    predictions = (probabilities >= 0.5).astype(int)
     risks = [get_risk_level(float(item)) for item in probabilities]
 
     result_frame = raw.copy()
@@ -824,7 +828,7 @@ async def predict_batch(file: UploadFile = File(...)):
     }
 
 
-@app.post("/explain/shap")
+@router.post("/explain/shap")
 def explain_shap(payload: Optional[dict[str, Any]] = Body(default=None)):
     if not payload:
         try:
@@ -843,7 +847,7 @@ def explain_shap(payload: Optional[dict[str, Any]] = Body(default=None)):
     return {"shap_values": explanation, "base_value": round(float(baseline), 4)}
 
 
-@app.post("/explain/lime")
+@router.post("/explain/lime")
 def explain_lime(customer: CustomerData):
     try:
         explanation, baseline = _local_explanation(customer)
@@ -863,7 +867,7 @@ def explain_lime(customer: CustomerData):
     return {"lime_values": lime_values, "prediction_probability": round(float(baseline), 4)}
 
 
-@app.post("/train")
+@router.post("/train")
 def train(params: TrainParams):
     try:
         if params.csv_content:
@@ -871,79 +875,81 @@ def train(params: TrainParams):
         elif params.data_path:
             training_frame = pd.read_csv(params.data_path)
         else:
-            training_frame = pd.read_csv(_find_training_dataset_path())
+            default_candidates = sorted((ROOT_DIR / "data").glob("*.csv"))
+            if not default_candidates:
+                raise HTTPException(status_code=404, detail="No training dataset was found.")
+            training_frame = pd.read_csv(default_candidates[0])
 
         features, target = prepare_training_data(training_frame)
         if len(features) < 10:
             raise HTTPException(status_code=400, detail="The training dataset is too small to evaluate reliably.")
 
-        import time
-
-        started_at = datetime.now(timezone.utc)
-        start_time = time.perf_counter()
-        artifacts = train_churn_pipeline(
-            df=training_frame,
-            algorithm=params.algorithm,
-            test_size=params.test_size,
-            precision_floor=0.68,
-            recall_target=0.80,
-        )
-        elapsed = round(time.perf_counter() - start_time, 2)
-
-        metadata = dict(artifacts.metadata)
-        metadata["trained_at"] = started_at.isoformat()
-
-        MODELS_DIR.mkdir(parents=True, exist_ok=True)
-        joblib.dump(artifacts.pipeline, DEFAULT_MODEL_PATH)
-        joblib.dump(artifacts.feature_names, FEATURE_NAMES_PATH)
-        joblib.dump(metadata, MODEL_METADATA_PATH)
-        artifacts.metrics_frame.to_csv(METRICS_PATH, index=False)
-
-        get_model.cache_clear()
-        get_feature_names.cache_clear()
-        get_model_metadata.cache_clear()
-
-        model = get_model()
-        estimator = model.named_steps["model"] if hasattr(model, "named_steps") else model
-        training_samples, test_samples = train_test_split(
+        stratify_target = target if target.nunique() > 1 else None
+        x_train, x_test, y_train, y_test = train_test_split(
+            features,
             target,
             test_size=params.test_size,
             random_state=42,
-            stratify=target if target.nunique() > 1 else None,
+            stratify=stratify_target,
         )
+
+        estimator = build_training_estimator(params.algorithm)
+        started_at = datetime.now(timezone.utc)
+        import time
+
+        start_time = time.perf_counter()
+        estimator.fit(x_train, y_train)
+        elapsed = round(time.perf_counter() - start_time, 2)
+
+        y_pred = estimator.predict(x_test)
+        if hasattr(estimator, "predict_proba"):
+            y_prob = estimator.predict_proba(x_test)[:, 1]
+        else:
+            raw_scores = estimator.decision_function(x_test)
+            y_prob = 1 / (1 + np.exp(-raw_scores))
+
+        tn, fp, fn, tp = confusion_matrix(y_test, y_pred, labels=[0, 1]).ravel()
+
+        accuracy = round(float(accuracy_score(y_test, y_pred)), 4)
+        precision = round(float(precision_score(y_test, y_pred, zero_division=0)), 4)
+        recall = round(float(recall_score(y_test, y_pred, zero_division=0)), 4)
+        f1 = round(float(f1_score(y_test, y_pred, zero_division=0)), 4)
+        try:
+            auc_roc = round(float(roc_auc_score(y_test, y_prob)), 4)
+        except Exception:
+            auc_roc = 0.5
 
         return {
             "algorithm": params.algorithm,
-            "resolved_model_type": estimator.__class__.__name__,
-            "accuracy": artifacts.metrics["accuracy"],
-            "auc_roc": artifacts.metrics["auc_roc"],
-            "precision": artifacts.metrics["precision"],
-            "recall": artifacts.metrics["recall"],
-            "f1": artifacts.metrics["f1"],
-            "training_samples": int(len(training_samples)),
-            "test_samples": int(len(test_samples)),
-            "feature_count": len(RAW_FEATURE_COLUMNS),
-            "engineered_feature_count": int(metadata.get("engineered_feature_count", 0)),
-            "transformed_feature_count": len(artifacts.feature_names),
-            "decision_threshold": artifacts.metrics["decision_threshold"],
-            "threshold_strategy": artifacts.metrics["threshold_strategy"],
-            "target_precision_floor": artifacts.metrics["target_precision_floor"],
-            "target_recall": artifacts.metrics["target_recall"],
-            "met_precision_floor": artifacts.metrics["met_precision_floor"],
-            "met_recall_target": artifacts.metrics["met_recall_target"],
-            "met_full_target": artifacts.metrics["met_full_target"],
+            "accuracy": accuracy,
+            "auc_roc": auc_roc,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "training_samples": int(len(x_train)),
+            "test_samples": int(len(x_test)),
+            "feature_count": int(x_train.shape[1]),
             "training_time": elapsed,
             "trained_at": started_at.isoformat(),
             "dataset_name": params.filename or params.data_path or "session-upload.csv",
             "model_evaluation": [
-                {"label": "Accuracy", "value": artifacts.metrics["accuracy"]},
-                {"label": "AUC-ROC", "value": artifacts.metrics["auc_roc"]},
-                {"label": "Precision", "value": artifacts.metrics["precision"]},
-                {"label": "Recall", "value": artifacts.metrics["recall"]},
-                {"label": "F1 Score", "value": artifacts.metrics["f1"]},
-                {"label": "Decision Threshold", "value": artifacts.metrics["decision_threshold"]},
+                {"label": "Accuracy", "value": accuracy},
+                {"label": "AUC-ROC", "value": auc_roc},
+                {"label": "Precision", "value": precision},
+                {"label": "Recall", "value": recall},
+                {"label": "F1 Score", "value": f1},
             ],
-            "confusion_matrix": artifacts.metrics["confusion_matrix"],
+            "confusion_matrix": {
+                "labels": ["Retain", "Churn"],
+                "matrix": [
+                    [int(tn), int(fp)],
+                    [int(fn), int(tp)],
+                ],
+                "true_negative": int(tn),
+                "false_positive": int(fp),
+                "false_negative": int(fn),
+                "true_positive": int(tp),
+            },
         }
     except HTTPException:
         raise
@@ -951,7 +957,7 @@ def train(params: TrainParams):
         raise HTTPException(status_code=500, detail="Training could not be completed right now.")
 
 
-@app.post("/roi/calculate")
+@router.post("/roi/calculate")
 def roi_calculate(params: ROIParams):
     churning_customers = round(params.total_customers * params.churn_rate)
     revenue_at_risk = churning_customers * params.avg_arpu * 12
@@ -976,8 +982,7 @@ def roi_calculate(params: ROIParams):
     }
 
 
-try:
-    from mangum import Mangum
-    handler = Mangum(app, lifespan="off")
-except ImportError:
-    handler = app
+# ---------------------------------------------------------
+# ATTACH ROUTER TO APP (Do not remove this!)
+# ---------------------------------------------------------
+app.include_router(router)
