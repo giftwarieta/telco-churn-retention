@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import sys
+import traceback
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -90,21 +91,40 @@ RAW_FEATURE_DEFAULTS = {
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+PROCESSOR_AVAILABLE = False
+TRAINING_HELPERS_AVAILABLE = False
+
 try:
     from src.processor import clean_and_prepare, engineer_features, get_features
 
-    SRC_AVAILABLE = True
+    PROCESSOR_AVAILABLE = True
 except Exception:
-    SRC_AVAILABLE = False
     clean_and_prepare = None
     engineer_features = None
     get_features = None
+
+try:
+    from src.training import (
+        engineer_telco_features,
+        ensure_raw_feature_frame,
+        save_training_artifacts,
+        train_churn_pipeline,
+    )
+
+    TRAINING_HELPERS_AVAILABLE = True
+except Exception:
+    engineer_telco_features = None
+    ensure_raw_feature_frame = None
+    save_training_artifacts = None
+    train_churn_pipeline = None
+
+SRC_AVAILABLE = PROCESSOR_AVAILABLE or TRAINING_HELPERS_AVAILABLE
 
 
 app = FastAPI(
     title="ChurnIQ Vercel Backend",
     description="Serverless churn prediction backend for the ChurnIQ dashboard.",
-    version="3.0.0",
+    version="1.0.0",
 )
 
 app.add_middleware(
@@ -177,7 +197,20 @@ def _find_model_path() -> Path:
 
 @lru_cache(maxsize=1)
 def get_model():
-    return joblib.load(_find_model_path())
+    model_path = _find_model_path()
+    try:
+        return joblib.load(model_path)
+    except ModuleNotFoundError as exc:
+        module_name = getattr(exc, "name", "") or ""
+        if module_name.startswith("sklearn.") or "sklearn." in str(exc):
+            _rebuild_model_artifacts(exc)
+            return joblib.load(model_path)
+        raise
+    except Exception as exc:
+        if "sklearn." in str(exc):
+            _rebuild_model_artifacts(exc)
+            return joblib.load(model_path)
+        raise
 
 
 @lru_cache(maxsize=1)
@@ -210,6 +243,51 @@ def get_feature_names() -> tuple[str, ...]:
         return tuple(str(item) for item in model.feature_names_in_)
 
     raise FileNotFoundError("Feature names are missing. Add models/feature_names.pkl before deploying.")
+
+
+def _rebuild_model_artifacts(reason: Exception | str) -> None:
+    if not (TRAINING_HELPERS_AVAILABLE and train_churn_pipeline and save_training_artifacts):
+        raise RuntimeError(
+            f"Model artifacts are incompatible with the current scikit-learn runtime, and training helpers are unavailable: {reason}"
+        )
+
+    training_path = _find_training_dataset_path()
+    training_frame = pd.read_csv(training_path)
+
+    existing_metadata = {}
+    if MODEL_METADATA_PATH.exists():
+        try:
+            loaded_metadata = joblib.load(MODEL_METADATA_PATH)
+            if isinstance(loaded_metadata, dict):
+                existing_metadata = loaded_metadata
+        except Exception:
+            existing_metadata = {}
+
+    algorithm = str(existing_metadata.get("algorithm") or "gradient_boosting")
+    artifacts = train_churn_pipeline(
+        df=training_frame,
+        algorithm=algorithm,
+        test_size=0.2,
+        precision_floor=0.68,
+        recall_target=0.80,
+    )
+
+    metadata = dict(artifacts.metadata)
+    metadata["trained_at"] = datetime.now(timezone.utc).isoformat()
+    metadata["auto_retrained"] = True
+    metadata["auto_retrain_reason"] = str(reason)
+    metadata["auto_retrain_dataset"] = str(training_path.name)
+
+    save_training_artifacts(
+        artifacts=artifacts,
+        models_dir=MODELS_DIR,
+        metrics_path=METRICS_PATH,
+    )
+    joblib.dump(metadata, MODEL_METADATA_PATH)
+
+    get_model.cache_clear()
+    get_feature_names.cache_clear()
+    get_model_metadata.cache_clear()
 
 
 def _normalize_customer_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -332,8 +410,24 @@ def _find_training_dataset_path() -> Path:
     raise HTTPException(status_code=404, detail="No valid churn training dataset was found.")
 
 
+def _safe_quantile_band(series: pd.Series, labels: list[str], fallback_label: str) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    if numeric.dropna().nunique() < 2:
+        return pd.Series([fallback_label] * len(series), index=series.index, dtype="object")
+
+    try:
+        banded = pd.qcut(numeric, q=min(len(labels), numeric.dropna().nunique()), duplicates="drop")
+        categories = list(banded.cat.categories)
+        if not categories:
+            return pd.Series([fallback_label] * len(series), index=series.index, dtype="object")
+        renamed = banded.cat.rename_categories(labels[: len(categories)])
+        return renamed.astype("object").fillna(fallback_label)
+    except Exception:
+        return pd.Series([fallback_label] * len(series), index=series.index, dtype="object")
+
+
 def _apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
-    frame = _normalize_customer_frame(df)
+    frame = _ensure_raw_feature_frame(df)
 
     if SRC_AVAILABLE and clean_and_prepare and engineer_features:
         try:
@@ -343,7 +437,8 @@ def _apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
         except Exception:
             pass
 
-    services = [
+    service_columns = [
+        "MultipleLines",
         "OnlineSecurity",
         "OnlineBackup",
         "DeviceProtection",
@@ -351,13 +446,57 @@ def _apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
         "StreamingTV",
         "StreamingMovies",
     ]
-    for column in services:
-        if column not in frame.columns:
-            frame[column] = "No"
-    frame["Num_Services"] = (frame[services] == "Yes").sum(axis=1)
-    frame["Cost_Per_Service"] = frame["MonthlyCharges"] / (frame["Num_Services"] + 1)
-    frame["Tenure_to_Charge_Ratio"] = frame["tenure"] / (frame["MonthlyCharges"] + 1)
-    frame["Is_New_High_Payer"] = (
+    internet_service_columns = [
+        "OnlineSecurity",
+        "OnlineBackup",
+        "DeviceProtection",
+        "TechSupport",
+        "StreamingTV",
+        "StreamingMovies",
+    ]
+    frame["Num_Services"] = sum(frame[column].eq("Yes").astype(int) for column in service_columns)
+    frame["Num_Internet_Services"] = sum(frame[column].eq("Yes").astype(int) for column in internet_service_columns)
+    frame["Has_Any_Streaming"] = (
+        (frame["StreamingTV"] == "Yes") | (frame["StreamingMovies"] == "Yes")
+    ).astype(int)
+    frame["Has_Security_Bundle"] = (
+        (frame["OnlineSecurity"] == "Yes") | (frame["TechSupport"] == "Yes")
+    ).astype(int)
+    frame["Has_Backup_Protection"] = (
+        (frame["OnlineBackup"] == "Yes") | (frame["DeviceProtection"] == "Yes")
+    ).astype(int)
+    frame["Is_Fiber"] = frame["InternetService"].eq("Fiber optic").astype(int)
+    frame["Is_MonthToMonth"] = frame["Contract"].eq("Month-to-month").astype(int)
+    frame["Is_AutoPay"] = frame["PaymentMethod"].isin(
+        ["Bank transfer (automatic)", "Credit card (automatic)"]
+    ).astype(int)
+    frame["Is_Electronic_Check"] = frame["PaymentMethod"].eq("Electronic check").astype(int)
+    frame["Household_Flag"] = ((frame["Partner"] == "Yes") | (frame["Dependents"] == "Yes")).astype(int)
+    frame["Fiber_MonthToMonth"] = (
+        (frame["InternetService"] == "Fiber optic") & (frame["Contract"] == "Month-to-month")
+    ).astype(int)
+    frame["Unprotected_Fiber"] = (
+        (frame["InternetService"] == "Fiber optic")
+        & (frame["OnlineSecurity"] != "Yes")
+        & (frame["TechSupport"] != "Yes")
+    ).astype(int)
+    frame["Tenure_Band"] = pd.cut(
+        frame["tenure"],
+        bins=[-1, 3, 6, 12, 24, 48, 72],
+        labels=["0-3", "4-6", "7-12", "13-24", "25-48", "49-72"],
+    )
+    frame["Monthly_Charge_Band"] = _safe_quantile_band(
+        frame["MonthlyCharges"],
+        labels=["very_low", "low", "mid", "high", "very_high"],
+        fallback_label="mid",
+    )
+    frame["Charge_Per_Month"] = frame["TotalCharges"] / frame["tenure"].replace(0, np.nan)
+    frame["Tenure_Charge_Interaction"] = frame["tenure"] * frame["MonthlyCharges"]
+    frame["Charge_Gap"] = frame["TotalCharges"] - frame["Tenure_Charge_Interaction"]
+    frame["Charge_To_Service_Ratio"] = frame["MonthlyCharges"] / (frame["Num_Services"] + 1)
+    frame["Service_Density"] = frame["Num_Internet_Services"] / (frame["tenure"] + 1)
+    frame["Zero_TotalCharges"] = frame["TotalCharges"].fillna(0).eq(0).astype(int)
+    frame["HighValue_NewCustomer"] = (
         (frame["tenure"] <= 12) & (frame["MonthlyCharges"] >= frame["MonthlyCharges"].median())
     ).astype(int)
     return frame
@@ -365,7 +504,14 @@ def _apply_feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
 
 def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
     defaults = get_model_metadata().get("feature_defaults") or RAW_FEATURE_DEFAULTS
-    return _ensure_raw_feature_frame(df, defaults=defaults)
+    raw_frame = (
+        ensure_raw_feature_frame(df, defaults=defaults)
+        if ensure_raw_feature_frame
+        else _ensure_raw_feature_frame(df, defaults=defaults)
+    )
+    if engineer_telco_features:
+        return engineer_telco_features(raw_frame)
+    return _apply_feature_engineering(raw_frame)
 
 
 def prepare_training_data(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
@@ -552,7 +698,8 @@ def _load_metrics() -> list[dict[str, Any]]:
 
 
 @app.get("/health")
-def health():
+@app.get("/api/health")
+def health_check():
     model_loaded = True
     try:
         get_model()
@@ -561,12 +708,9 @@ def health():
         model_loaded = False
 
     return {
-        "status": "ok" if model_loaded else "degraded",
-        "deployment": "vercel-python-function",
-        "model_loaded": model_loaded,
-        "training_supported": True,
-        "src_available": SRC_AVAILABLE,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "message": "Telco CHurnIQ API is Live!",
+        "developed by": "Warieta Gift Ejovwoke for practice",
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "version": app.version,
     }
 
@@ -576,7 +720,6 @@ def root():
     return {
         "status": "ok",
         "service": "ChurnIQ FastAPI backend",
-        "deployment": "vercel-python-function",
         "version": app.version,
     }
 
@@ -590,6 +733,8 @@ def model_info():
     except Exception:
         raise HTTPException(status_code=503, detail="A trained model is not available in this deployment.")
 
+    estimator = model.named_steps["model"] if hasattr(model, "named_steps") else model
+
     info = {
         "model_type": type(model).__name__,
         "resolved_model_type": estimator.__class__.__name__,
@@ -600,7 +745,6 @@ def model_info():
         "decision_threshold": metadata.get("decision_threshold", 0.5),
     }
 
-    estimator = model.named_steps["model"] if hasattr(model, "named_steps") else model
     if hasattr(estimator, "n_estimators"):
         info["n_estimators"] = estimator.n_estimators
 
@@ -621,8 +765,9 @@ def predict(customer: CustomerData):
         probability = _prediction_probability(model, features)
     except FileNotFoundError:
         raise HTTPException(status_code=503, detail="A trained model is not available in this deployment.")
-    except Exception:
-        raise HTTPException(status_code=500, detail="Prediction could not be completed right now.")
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {exc}")
 
     threshold = float(metadata.get("decision_threshold", 0.5))
     prediction = int(probability >= threshold)
@@ -647,8 +792,9 @@ async def predict_batch(file: UploadFile = File(...)):
         probabilities = model.predict_proba(features)[:, 1]
     except FileNotFoundError:
         raise HTTPException(status_code=503, detail="A trained model is not available in this deployment.")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Batch prediction failed. Check that the uploaded CSV uses the expected columns.")
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=f"Batch prediction failed: {exc}")
 
     threshold = float(metadata.get("decision_threshold", 0.5))
     predictions = (probabilities >= threshold).astype(int)
@@ -731,110 +877,73 @@ def train(params: TrainParams):
         if len(features) < 10:
             raise HTTPException(status_code=400, detail="The training dataset is too small to evaluate reliably.")
 
-        stratify_target = target if target.nunique() > 1 else None
-        x_train, x_test, y_train, y_test = train_test_split(
-            features,
-            target,
-            test_size=params.test_size,
-            random_state=42,
-            stratify=stratify_target,
-        )
-
-        preprocessor = _build_preprocessor()
-        estimator = build_training_estimator(params.algorithm)
-        pipeline = Pipeline(
-            [
-                ("preprocessor", preprocessor),
-                ("model", estimator),
-            ]
-        )
-        started_at = datetime.now(timezone.utc)
         import time
 
+        started_at = datetime.now(timezone.utc)
         start_time = time.perf_counter()
-        pipeline.fit(x_train, y_train)
+        artifacts = train_churn_pipeline(
+            df=training_frame,
+            algorithm=params.algorithm,
+            test_size=params.test_size,
+            precision_floor=0.68,
+            recall_target=0.80,
+        )
         elapsed = round(time.perf_counter() - start_time, 2)
 
-        y_prob = pipeline.predict_proba(x_test)[:, 1]
-        decision_threshold = _choose_decision_threshold(y_test, y_prob)
-        y_pred = (y_prob >= decision_threshold).astype(int)
-
-        tn, fp, fn, tp = confusion_matrix(y_test, y_pred, labels=[0, 1]).ravel()
-
-        accuracy = round(float(accuracy_score(y_test, y_pred)), 4)
-        precision = round(float(precision_score(y_test, y_pred, zero_division=0)), 4)
-        recall = round(float(recall_score(y_test, y_pred, zero_division=0)), 4)
-        f1 = round(float(f1_score(y_test, y_pred, zero_division=0)), 4)
-        try:
-            auc_roc = round(float(roc_auc_score(y_test, y_prob)), 4)
-        except Exception:
-            auc_roc = 0.5
-
-        transformed_feature_names = list(pipeline.named_steps["preprocessor"].get_feature_names_out())
-        feature_defaults = _extract_default_values(features)
+        metadata = dict(artifacts.metadata)
+        metadata["trained_at"] = started_at.isoformat()
 
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
-        joblib.dump(pipeline, DEFAULT_MODEL_PATH)
-        joblib.dump(transformed_feature_names, FEATURE_NAMES_PATH)
-        joblib.dump(
-            {
-                "algorithm": params.algorithm,
-                "raw_feature_names": RAW_FEATURE_COLUMNS,
-                "transformed_feature_names": transformed_feature_names,
-                "decision_threshold": decision_threshold,
-                "feature_defaults": feature_defaults,
-                "raw_feature_count": len(RAW_FEATURE_COLUMNS),
-                "transformed_feature_count": len(transformed_feature_names),
-                "trained_at": started_at.isoformat(),
-            },
-            MODEL_METADATA_PATH,
-        )
-
-        metrics_export = x_test.copy()
-        metrics_export["Actual"] = y_test.to_numpy()
-        metrics_export["Predicted"] = y_pred
-        metrics_export["Risk_Probability"] = np.round(y_prob, 6)
-        metrics_export.to_csv(METRICS_PATH, index=False)
+        joblib.dump(artifacts.pipeline, DEFAULT_MODEL_PATH)
+        joblib.dump(artifacts.feature_names, FEATURE_NAMES_PATH)
+        joblib.dump(metadata, MODEL_METADATA_PATH)
+        artifacts.metrics_frame.to_csv(METRICS_PATH, index=False)
 
         get_model.cache_clear()
         get_feature_names.cache_clear()
         get_model_metadata.cache_clear()
 
+        model = get_model()
+        estimator = model.named_steps["model"] if hasattr(model, "named_steps") else model
+        training_samples, test_samples = train_test_split(
+            target,
+            test_size=params.test_size,
+            random_state=42,
+            stratify=target if target.nunique() > 1 else None,
+        )
+
         return {
             "algorithm": params.algorithm,
             "resolved_model_type": estimator.__class__.__name__,
-            "accuracy": accuracy,
-            "auc_roc": auc_roc,
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "training_samples": int(len(x_train)),
-            "test_samples": int(len(x_test)),
+            "accuracy": artifacts.metrics["accuracy"],
+            "auc_roc": artifacts.metrics["auc_roc"],
+            "precision": artifacts.metrics["precision"],
+            "recall": artifacts.metrics["recall"],
+            "f1": artifacts.metrics["f1"],
+            "training_samples": int(len(training_samples)),
+            "test_samples": int(len(test_samples)),
             "feature_count": len(RAW_FEATURE_COLUMNS),
-            "transformed_feature_count": len(transformed_feature_names),
-            "decision_threshold": decision_threshold,
+            "engineered_feature_count": int(metadata.get("engineered_feature_count", 0)),
+            "transformed_feature_count": len(artifacts.feature_names),
+            "decision_threshold": artifacts.metrics["decision_threshold"],
+            "threshold_strategy": artifacts.metrics["threshold_strategy"],
+            "target_precision_floor": artifacts.metrics["target_precision_floor"],
+            "target_recall": artifacts.metrics["target_recall"],
+            "met_precision_floor": artifacts.metrics["met_precision_floor"],
+            "met_recall_target": artifacts.metrics["met_recall_target"],
+            "met_full_target": artifacts.metrics["met_full_target"],
             "training_time": elapsed,
             "trained_at": started_at.isoformat(),
             "dataset_name": params.filename or params.data_path or "session-upload.csv",
             "model_evaluation": [
-                {"label": "Accuracy", "value": accuracy},
-                {"label": "AUC-ROC", "value": auc_roc},
-                {"label": "Precision", "value": precision},
-                {"label": "Recall", "value": recall},
-                {"label": "F1 Score", "value": f1},
-                {"label": "Decision Threshold", "value": decision_threshold},
+                {"label": "Accuracy", "value": artifacts.metrics["accuracy"]},
+                {"label": "AUC-ROC", "value": artifacts.metrics["auc_roc"]},
+                {"label": "Precision", "value": artifacts.metrics["precision"]},
+                {"label": "Recall", "value": artifacts.metrics["recall"]},
+                {"label": "F1 Score", "value": artifacts.metrics["f1"]},
+                {"label": "Decision Threshold", "value": artifacts.metrics["decision_threshold"]},
             ],
-            "confusion_matrix": {
-                "labels": ["Retain", "Churn"],
-                "matrix": [
-                    [int(tn), int(fp)],
-                    [int(fn), int(tp)],
-                ],
-                "true_negative": int(tn),
-                "false_positive": int(fp),
-                "false_negative": int(fn),
-                "true_positive": int(tp),
-            },
+            "confusion_matrix": artifacts.metrics["confusion_matrix"],
         }
     except HTTPException:
         raise
