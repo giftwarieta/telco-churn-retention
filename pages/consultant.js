@@ -549,16 +549,34 @@ function ConsultantSetupCard({ profileDraft, setProfileDraft, onSave }) {
   );
 }
 
-function ConsultantStarterCard() {
+function ConsultantStarterCard({ introText }) {
+  const lines = String(introText || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
   return (
-    <div className="mx-auto w-full max-w-2xl rounded-[32px] border border-emerald-500/20 bg-emerald-500/6 p-6 text-center sm:p-8">
+    <div className="mx-auto w-full max-w-3xl rounded-[32px] border border-emerald-500/20 bg-emerald-500/6 p-5 text-center sm:p-8">
       <div className="mx-auto mb-4 h-16 w-16 overflow-hidden rounded-full border border-emerald-500/20 sm:h-20 sm:w-20">
         <ConsultantAvatar />
       </div>
       <h3 className="font-display text-2xl font-bold text-white sm:text-4xl">Ask anything about the data</h3>
-      <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-slate-400 sm:text-base">
-        You can ask about churn rate, segment mix, contract patterns, customer counts, averages, trends, and what the active data implies for retention strategy.
-      </p>
+      <div className="mx-auto mt-5 max-w-2xl rounded-[28px] border border-white/8 bg-black/12 p-4 text-left sm:p-5">
+        <div className="space-y-3 text-sm leading-relaxed text-slate-300 sm:text-[15px]">
+          {lines.map((line, index) => (
+            line.startsWith('- ') ? (
+              <div key={`${line}-${index}`} className="flex items-start gap-3">
+                <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-400" />
+                <span>{line.slice(2)}</span>
+              </div>
+            ) : (
+              <p key={`${line}-${index}`} className="whitespace-pre-wrap">
+                {line}
+              </p>
+            )
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -621,15 +639,6 @@ export default function ConsultantPage() {
         if (!active) return;
         setDataSummary(summary);
 
-        if (storedProfile.userName && storedProfile.companyName && storedHistory.length === 0) {
-          setMessages([
-            {
-              role: 'assistant',
-              content: buildWelcomeMessage(storedProfile, summary, workspace),
-              timestamp: Date.now(),
-            },
-          ]);
-        }
       } catch {
         if (active) setDataSummary(null);
       } finally {
@@ -656,15 +665,10 @@ export default function ConsultantPage() {
     }
 
     const saved = setConsultantProfile(nextProfile);
-    const welcomeMessage = {
-      role: 'assistant',
-      content: buildWelcomeMessage(saved, dataSummary, getWorkspaceContext()),
-      timestamp: Date.now(),
-    };
 
     setConsultantProfileState(saved);
     setProfileDraft(saved);
-    setMessages([welcomeMessage]);
+    setMessages([]);
     toast.success('Consultant workspace is ready');
   };
 
@@ -744,6 +748,12 @@ export default function ConsultantPage() {
   const churnSummary = dataSummary?.target?.positiveRate;
   const topInsight = dataSummary?.insights?.[0];
   const hasUserMessages = messages.some((message) => message.role === 'user');
+  const starterIntro = profileReady
+    ? buildWelcomeMessage(consultantProfileState, dataSummary, workspaceContext)
+    : '';
+  const visibleMessages = hasUserMessages
+    ? messages
+    : messages.filter((message) => message.role === 'user' || message.isError);
 
   return (
     <Layout title="AI Consultant">
@@ -816,37 +826,39 @@ export default function ConsultantPage() {
           </Card>
         </div>
 
-        <Card className="order-1 flex h-[calc(100svh-12rem)] min-h-0 max-h-[calc(100svh-12rem)] flex-col overflow-hidden p-0 sm:h-[calc(100svh-8.75rem)] sm:max-h-[calc(100svh-8.75rem)] lg:order-2 lg:h-[calc(100svh-4.75rem)] lg:max-h-[calc(100svh-4.75rem)]">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--border)] px-4 py-4 sm:px-5">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 overflow-hidden rounded-full border border-emerald-500/20 bg-emerald-500/12">
-                <ConsultantAvatar />
-              </div>
-              <div>
-                <div className="font-display text-sm font-semibold text-white sm:text-base">Consultant Chat</div>
-                <div className="text-xs text-slate-500">
-                  {profileReady
-                    ? `Data-aware guidance for ${consultantProfileState.companyName}`
-                    : 'Complete your setup to begin a personalised chat'}
+        <Card className="order-1 flex h-[calc(100svh-14rem)] min-h-0 max-h-[calc(100svh-14rem)] flex-col overflow-hidden p-0 sm:h-[calc(100svh-5.75rem)] sm:max-h-[calc(100svh-5.75rem)] lg:order-2 lg:h-[calc(100svh-3rem)] lg:max-h-[calc(100svh-3rem)]">
+          <div className="border-b border-[color:var(--border)] px-3 py-3 sm:px-5 sm:py-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+                <div className="h-9 w-9 overflow-hidden rounded-full border border-emerald-500/20 bg-emerald-500/12 sm:h-10 sm:w-10">
+                  <ConsultantAvatar />
+                </div>
+                <div className="min-w-0">
+                  <div className="truncate font-display text-sm font-semibold text-white sm:text-base">Consultant Chat</div>
+                  <div className="hidden text-xs text-slate-500 sm:block">
+                    {profileReady
+                      ? `Data-aware guidance for ${consultantProfileState.companyName}`
+                      : 'Complete your setup to begin a personalised chat'}
+                  </div>
                 </div>
               </div>
+
+              {profileReady && (
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  {messages.length > 0 && (
+                    <Button icon={Trash2} variant="ghost" size="sm" onClick={handleClearChat} className="px-2.5 sm:px-3">
+                      <span className="hidden sm:inline">Clear</span>
+                    </Button>
+                  )}
+                  <Button icon={LogOut} variant="ghost" size="sm" onClick={handleEndSession} className="px-2.5 sm:px-3">
+                    <span className="hidden sm:inline">End Session</span>
+                  </Button>
+                </div>
+              )}
             </div>
 
             {profileReady && (
-              <div className="flex items-center gap-2">
-                {messages.length > 0 && (
-                  <Button icon={Trash2} variant="ghost" size="sm" onClick={handleClearChat}>
-                    Clear
-                  </Button>
-                )}
-                <Button icon={LogOut} variant="ghost" size="sm" onClick={handleEndSession}>
-                  End Session
-                </Button>
-              </div>
-            )}
-
-            {profileReady && (
-              <div className="flex w-full flex-wrap gap-2 lg:hidden">
+              <div className="mt-2.5 flex w-full items-center gap-2 overflow-x-auto lg:hidden">
                 <Badge color={workspaceContext.dataSource === 'custom' ? 'purple' : 'cyan'}>
                   {workspaceContext.dataSource === 'custom' ? 'Custom session' : 'Default workspace'}
                 </Badge>
@@ -857,7 +869,7 @@ export default function ConsultantPage() {
             )}
           </div>
 
-          <div className="consultant-chat-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+          <div className="consultant-chat-scroll min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-5 sm:py-4">
             <div className="space-y-4">
               {!profileReady ? (
                 <ConsultantSetupCard
@@ -866,10 +878,10 @@ export default function ConsultantPage() {
                   onSave={handleSaveProfile}
                 />
               ) : !hasUserMessages ? (
-                <ConsultantStarterCard />
+                <ConsultantStarterCard introText={starterIntro} />
               ) : null}
 
-              {messages.map((message, index) => (
+              {visibleMessages.map((message, index) => (
                 <MessageBubble key={`${message.timestamp}-${index}`} msg={message} />
               ))}
 
@@ -916,14 +928,14 @@ export default function ConsultantPage() {
                 }
                 rows={1}
                 disabled={!profileReady}
-                className="input-field min-h-[50px] max-h-[132px] flex-1 resize-none rounded-2xl px-4 py-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                className="input-field min-h-[46px] max-h-[132px] flex-1 resize-none rounded-2xl px-4 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-[50px] sm:py-3"
               />
               <Button
                 icon={Send}
                 onClick={() => sendMessage()}
                 disabled={!profileReady || !input.trim() || loading}
                 loading={loading}
-                className="h-[50px] flex-shrink-0"
+                className="h-[46px] flex-shrink-0 sm:h-[50px]"
               >
                 Send
               </Button>
