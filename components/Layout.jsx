@@ -88,12 +88,22 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
     let mounted = true;
 
     async function checkApi() {
-      try {
-        const response = await fetch(`${getApiBaseUrl()}/health`, {
-          signal: AbortSignal.timeout(3000),
+      const baseUrl = getApiBaseUrl();
+
+      async function tryEndpoint(endpoint) {
+        const response = await fetch(`${baseUrl}${endpoint}`, {
+          signal: AbortSignal.timeout(8000),
         });
+        return response;
+      }
+
+      try {
+        let response = await tryEndpoint('/health').catch(() => null);
+        if (!response) {
+          response = await tryEndpoint('').catch(() => null);
+        }
         if (!mounted) return;
-        setApiStatus(response.ok ? 'online' : 'offline');
+        setApiStatus(response?.ok ? 'online' : 'offline');
       } catch {
         if (mounted) {
           setApiStatus('offline');
@@ -124,7 +134,7 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
     if (apiStatus === 'checking') {
       return { label: 'Checking connection', textClass: 'text-sky-500', iconClass: 'text-sky-500', dotClass: 'bg-sky-500' };
     }
-    return { label: 'Preview mode', textClass: 'text-rose-500', iconClass: 'text-rose-500', dotClass: 'bg-rose-500' };
+    return { label: 'Backend unavailable', textClass: 'text-rose-500', iconClass: 'text-rose-500', dotClass: 'bg-rose-500' };
   }, [apiStatus]);
 
   const toggleTheme = () => {

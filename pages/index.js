@@ -126,8 +126,8 @@ export default function HomePage() {
 
   return (
     <Layout title="Overview">
-      <section className="mb-8 flex min-h-[calc(100svh-9.5rem)] flex-col gap-4 lg:grid lg:min-h-0 lg:grid-cols-[1.35fr_0.85fr] lg:gap-6">
-        <Card className="order-2 overflow-hidden p-5 text-center sm:p-8 lg:order-1 lg:text-left">
+      <section className="mb-8 flex min-h-[calc(100svh-7rem)] flex-col justify-center gap-4 lg:grid lg:min-h-0 lg:grid-cols-[1.2fr_0.9fr] lg:gap-6">
+        <Card className="order-2 mx-auto w-full max-w-4xl overflow-hidden p-5 text-center sm:p-8 lg:order-1 lg:mx-0 lg:text-left">
           <div className="mb-4 flex flex-wrap items-center justify-center gap-2 lg:justify-start">
             <Badge color="cyan">Modern retention workspace</Badge>
             <Badge color="amber">Responsive dashboard</Badge>
@@ -185,7 +185,7 @@ export default function HomePage() {
           </div>
         </Card>
 
-        <Card className="order-1 my-auto p-5 text-center sm:p-6 lg:order-2 lg:text-left">
+        <Card className="order-1 mx-auto my-auto w-full max-w-xl p-5 text-center sm:p-6 lg:order-2 lg:mx-0 lg:text-left">
           <div className="mb-4 flex items-center justify-center gap-3 lg:justify-start">
             <div className="rounded-2xl bg-sky-500/10 p-3">
               <Rocket className="h-6 w-6 text-sky-500" />
@@ -212,7 +212,7 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={handleChooseDefaultPath}
-                className={`w-full rounded-3xl border p-4 text-left transition-all ${
+                className={`w-full rounded-3xl border p-4 text-left transition-all sm:p-4 ${
                   dataSource === 'default'
                     ? 'border-sky-500/35 bg-sky-500/10 shadow-[0_0_0_1px_rgba(14,165,233,0.08)]'
                     : 'border-[color:var(--border)] bg-white/3 hover:border-sky-500/25 hover:bg-sky-500/6'
@@ -237,7 +237,7 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={handleChooseCustomPath}
-                className={`w-full rounded-3xl border p-4 text-left transition-all ${
+                className={`w-full rounded-3xl border p-4 text-left transition-all sm:p-4 ${
                   dataSource === 'custom'
                     ? 'border-purple-500/35 bg-purple-500/10 shadow-[0_0_0_1px_rgba(168,85,247,0.08)]'
                     : 'border-[color:var(--border)] bg-white/3 hover:border-purple-500/25 hover:bg-purple-500/6'
