@@ -314,7 +314,9 @@ export default function TrainPage() {
                     { label: 'Algorithm', value: trainResult.algorithm?.toUpperCase() },
                     { label: 'Training Samples', value: trainResult.training_samples?.toLocaleString() },
                     { label: 'Test Samples', value: trainResult.test_samples?.toLocaleString() },
-                    { label: 'Features', value: trainResult.feature_count },
+                    { label: 'Input Features', value: trainResult.feature_count },
+                    { label: 'Encoded Features', value: trainResult.transformed_feature_count ?? trainResult.feature_count },
+                    { label: 'Threshold', value: trainResult.decision_threshold ?? 0.5 },
                   ].map((row) => (
                     <div key={row.label} className="flex items-center justify-between gap-3 rounded-2xl bg-white/3 px-3 py-3">
                       <span className="text-slate-500">{row.label}</span>

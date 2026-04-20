@@ -106,9 +106,10 @@ export default function DataOnboarding() {
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-stretch justify-center bg-[#070E1A]/96 p-0 backdrop-blur-sm sm:items-center sm:p-4">
-      <div className="h-full w-full max-w-3xl sm:h-auto sm:max-h-[calc(100svh-2rem)]">
-        <div className="flex h-full flex-col overflow-hidden border border-[#1E2D45] bg-[#0B1324] sm:rounded-[32px]">
+    <div className="fixed inset-0 z-[9999] overflow-y-auto bg-[#070E1A]/96 backdrop-blur-sm">
+      <div className="flex min-h-full items-start justify-center p-3 sm:items-center sm:p-4">
+        <div className="w-full max-w-3xl py-2 sm:py-0">
+        <div className="flex min-h-[calc(100svh-1rem)] flex-col overflow-hidden border border-[#1E2D45] bg-[#0B1324] sm:min-h-0 sm:max-h-[calc(100svh-2rem)] sm:rounded-[32px]">
           <div className="border-b border-[#1E2D45] px-4 py-4 text-center sm:px-8 sm:py-6">
             <div className="mx-auto mb-3 inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-sky-500/20 bg-sky-500/15 sm:h-14 sm:w-14">
               <Sparkles className="h-5 w-5 text-sky-400 sm:h-7 sm:w-7" />
@@ -119,9 +120,9 @@ export default function DataOnboarding() {
             </p>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-8 sm:py-6">
+          <div className="flex-1 overflow-visible px-4 py-4 sm:overflow-y-auto sm:px-8 sm:py-6">
             {step === 'choose' && (
-              <div className="grid h-full content-center gap-3 sm:grid-cols-2 sm:gap-4">
+              <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
                 <button
                   onClick={handleChooseDefault}
                   type="button"
@@ -181,7 +182,7 @@ export default function DataOnboarding() {
             )}
 
             {step === 'default-confirm' && (
-              <div className="mx-auto flex h-full max-w-2xl flex-col justify-center rounded-[28px] border border-[#1E2D45] bg-[#0D1526] p-4 sm:p-6">
+              <div className="mx-auto flex max-w-2xl flex-col rounded-[28px] border border-[#1E2D45] bg-[#0D1526] p-4 sm:p-6">
                 <button
                   onClick={() => setStep('choose')}
                   className="mb-4 flex items-center gap-1.5 text-xs text-slate-500 transition-colors hover:text-slate-300"
@@ -219,7 +220,7 @@ export default function DataOnboarding() {
             )}
 
             {step === 'custom-setup' && (
-              <div className="mx-auto flex h-full max-w-2xl flex-col rounded-[28px] border border-[#1E2D45] bg-[#0D1526] p-4 sm:p-6">
+              <div className="mx-auto flex max-w-2xl flex-col rounded-[28px] border border-[#1E2D45] bg-[#0D1526] p-4 sm:p-6">
                 <button
                   onClick={() => setStep('choose')}
                   className="mb-3 flex items-center gap-1.5 text-xs text-slate-500 transition-colors hover:text-slate-300"
@@ -332,6 +333,7 @@ export default function DataOnboarding() {
               </div>
             )}
           </div>
+        </div>
         </div>
       </div>
     </div>

@@ -386,8 +386,8 @@ function buildColumnTable(item) {
         item.topValues.map((entry) => [
           entry.value,
           String(entry.count),
-          entry.share != null ? String(entry.share) : '—',
-          entry.positiveRate != null ? String(entry.positiveRate) : '—',
+          entry.share != null ? String(entry.share) : '-',
+          entry.positiveRate != null ? String(entry.positiveRate) : '-',
         ])
       ),
     };
@@ -732,16 +732,17 @@ Operational mandates & Scope:
 - When patterns are visible, connect them to commercial meaning, churn mechanism, and retention implications for ${companyName}.
 
 Formatting & Visual Capabilities (CRITICAL):
-- The frontend supports prose plus structured visuals.
+- The frontend supports well-formatted prose plus structured visuals.
 - If the user asks for a chart, graph, table, pie chart, donut chart, bar chart, column chart, line chart, or decision tree, and enough context is available, return valid JSON only in this exact shape:
 - {"reply":"short explanation","visuals":[{"type":"pie|donut|bar|column|line|table|decision_tree","title":"...","description":"optional","data":[{"label":"...","value":10}],"columns":["..."],"rows":[["..."]],"tree":{"label":"...","children":[{"label":"..."}]}}]}
-- Graphs & Charts: DO NOT use Mermaid code blocks. Instead, represent graphs visually using text-based emoji bar charts (e.g., [🟩🟩🟩🟩⬜⬜⬜] 40%) or simple text-based visual distributions to show proportions.
-- Use \`pie\`, \`donut\`, \`bar\`, \`column\`, or \`line\` for real charts rendered by the frontend.
-- Use \`table\` for metric matrices, category breakdowns, or field summaries.
-- Use \`decision_tree\` for decision logic, triage flow, or retention playbooks.
+- Do not use emojis, icons, ASCII art, Mermaid, raw HTML, or image markdown to simulate charts.
+- Use only these structured visual types for rendered visuals: \`pie\`, \`donut\`, \`bar\`, \`column\`, \`line\`, \`table\`, or \`decision_tree\`.
+- When using a visual, ensure the values are grounded in the supplied dataset context. Do not invent counts, percentages, categories, or trends.
+- Use \`table\` when the user needs exact values, comparisons, metric matrices, or category breakdowns.
+- Use \`decision_tree\` only for decision logic, triage flow, or retention playbooks.
 - If no visual is needed, return normal text only, not JSON.
-- Never return Markdown tables, Mermaid, raw HTML, or image markdown.
-- Ignore any earlier assumption about text-only charting. Structured visuals are supported and preferred whenever the user explicitly asks for them.
+- Keep prose readable with short paragraphs and markdown emphasis where helpful, such as **bold** for key findings.
+- Avoid markdown tables in prose when a structured table visual is more accurate.
 
 Conversation closing logic:
 - If the user says thanks or thank you, respond professionally acknowledging their gratitude.
@@ -753,7 +754,21 @@ Answer quality rules:
 }
 
 function getGroqEndpoint() {
-  return (process.env.GROQ_ENDPOINT || DEFAULT_GROQ_ENDPOINT).replace(/\/+$/, '');
+  const rawEndpoint = (process.env.GROQ_ENDPOINT || DEFAULT_GROQ_ENDPOINT).trim().replace(/\/+$/, '');
+
+  if (/\/chat\/completions$/i.test(rawEndpoint)) {
+    return rawEndpoint;
+  }
+
+  if (/\/openai\/v1$/i.test(rawEndpoint)) {
+    return `${rawEndpoint}/chat/completions`;
+  }
+
+  if (/^https?:\/\/api\.groq\.com$/i.test(rawEndpoint)) {
+    return `${rawEndpoint}/openai/v1/chat/completions`;
+  }
+
+  return rawEndpoint;
 }
 
 function getGroqModelName() {

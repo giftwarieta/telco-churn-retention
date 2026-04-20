@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import Layout from '../components/Layout';
 import { Badge, Button, Card, SectionHeader } from '../components/ui';
 import {
@@ -7,6 +9,7 @@ import {
   Copy,
   Database,
   Lightbulb,
+  LogOut,
   MessageSquare,
   Send,
   Sparkles,
@@ -19,6 +22,7 @@ import { addSessionEvent, getStats, pushGlobalStats, updateStats } from '../lib/
 import { chatWithConsultant } from '../lib/api';
 import {
   clearConsultantHistory,
+  clearConsultantProfile,
   getDefaultWorkspaceContext,
   getConsultantHistory,
   getConsultantProfile,
@@ -433,9 +437,60 @@ function MessageBubble({ msg }) {
                 : 'chat-assistant'
           } w-full overflow-hidden px-4 py-3`}
         >
-          <p className={`whitespace-pre-wrap break-words text-sm leading-relaxed ${isError ? 'text-rose-300' : 'text-slate-200'}`}>
-            {msg.content}
-          </p>
+          <div
+            className={`consultant-markdown text-sm leading-relaxed ${
+              isError ? 'text-rose-300' : 'text-slate-200'
+            }`}
+          >
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                p: ({ node, ...props }) => <p className="mb-3 whitespace-pre-wrap break-words last:mb-0" {...props} />,
+                strong: ({ node, ...props }) => <strong className="font-semibold text-white" {...props} />,
+                em: ({ node, ...props }) => <em className="italic text-slate-100" {...props} />,
+                ul: ({ node, ...props }) => <ul className="mb-3 list-disc space-y-1 pl-5 last:mb-0" {...props} />,
+                ol: ({ node, ...props }) => <ol className="mb-3 list-decimal space-y-1 pl-5 last:mb-0" {...props} />,
+                li: ({ node, ...props }) => <li className="break-words" {...props} />,
+                code: ({ inline, node, className, children, ...props }) =>
+                  inline ? (
+                    <code
+                      className={`rounded bg-slate-900/70 px-1.5 py-0.5 font-mono text-[0.85em] ${
+                        isError ? 'text-rose-200' : 'text-sky-200'
+                      }`}
+                      {...props}
+                    >
+                      {children}
+                    </code>
+                  ) : (
+                    <code
+                      className={`block overflow-x-auto rounded-xl border border-white/10 bg-slate-950/70 p-3 font-mono text-xs ${
+                        isError ? 'text-rose-200' : 'text-slate-100'
+                      } ${className || ''}`}
+                      {...props}
+                    >
+                      {children}
+                    </code>
+                  ),
+                pre: ({ node, ...props }) => <pre className="mb-3 overflow-x-auto last:mb-0" {...props} />,
+                table: ({ node, ...props }) => (
+                  <div className="mb-3 overflow-x-auto rounded-xl border border-white/10 last:mb-0">
+                    <table className="min-w-full text-left text-xs text-slate-200" {...props} />
+                  </div>
+                ),
+                thead: ({ node, ...props }) => <thead className="bg-slate-900/70 text-[11px] uppercase tracking-[0.18em] text-slate-400" {...props} />,
+                tbody: ({ node, ...props }) => <tbody className="divide-y divide-white/5" {...props} />,
+                tr: ({ node, ...props }) => <tr className="align-top" {...props} />,
+                th: ({ node, ...props }) => <th className="px-3 py-2 font-medium" {...props} />,
+                td: ({ node, ...props }) => <td className="px-3 py-2 text-slate-300" {...props} />,
+                a: ({ node, ...props }) => <a className="text-sky-300 underline underline-offset-2 hover:text-sky-200" target="_blank" rel="noreferrer" {...props} />,
+                blockquote: ({ node, ...props }) => (
+                  <blockquote className="mb-3 border-l-2 border-sky-400/40 pl-3 italic text-slate-300 last:mb-0" {...props} />
+                ),
+              }}
+            >
+              {msg.content || ''}
+            </ReactMarkdown>
+          </div>
           {!isError && Array.isArray(msg.visuals) && msg.visuals.length > 0 ? <ChatVisuals visuals={msg.visuals} /> : null}
         </div>
 
@@ -449,6 +504,61 @@ function MessageBubble({ msg }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ConsultantSetupCard({ profileDraft, setProfileDraft, onSave }) {
+  return (
+    <div className="mx-auto w-full max-w-2xl rounded-[32px] border border-sky-500/20 bg-sky-500/6 p-6 text-center sm:p-8">
+      <div className="mx-auto mb-4 h-16 w-16 overflow-hidden rounded-full border border-emerald-500/20 sm:h-20 sm:w-20">
+        <ConsultantAvatar />
+      </div>
+      <h3 className="font-display text-2xl font-bold text-white sm:text-4xl">Personalise your consultant</h3>
+      <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-slate-400 sm:text-base">
+        Enter your preferred name and organisation first. After that, you can ask direct questions about the active dataset, get insights from the data, and use the suggested prompts.
+      </p>
+
+      <div className="mx-auto mt-6 grid max-w-xl gap-3 text-left sm:grid-cols-2">
+        <div>
+          <label className="mb-1.5 block text-[11px] uppercase tracking-[0.18em] text-slate-500">Preferred name</label>
+          <input
+            value={profileDraft.userName || ''}
+            onChange={(event) => setProfileDraft((prev) => ({ ...prev, userName: event.target.value }))}
+            className="input-field w-full rounded-2xl px-4 py-3 text-sm"
+            placeholder="Enter your preferred name"
+          />
+        </div>
+        <div>
+          <label className="mb-1.5 block text-[11px] uppercase tracking-[0.18em] text-slate-500">Organisation</label>
+          <input
+            value={profileDraft.companyName || ''}
+            onChange={(event) => setProfileDraft((prev) => ({ ...prev, companyName: event.target.value }))}
+            className="input-field w-full rounded-2xl px-4 py-3 text-sm"
+            placeholder="Enter your organisation name"
+          />
+        </div>
+      </div>
+
+      <div className="mt-4 flex justify-center">
+        <Button icon={Building2} onClick={onSave} className="min-w-[14rem]">
+          Start Consultant Session
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ConsultantStarterCard() {
+  return (
+    <div className="mx-auto w-full max-w-2xl rounded-[32px] border border-emerald-500/20 bg-emerald-500/6 p-6 text-center sm:p-8">
+      <div className="mx-auto mb-4 h-16 w-16 overflow-hidden rounded-full border border-emerald-500/20 sm:h-20 sm:w-20">
+        <ConsultantAvatar />
+      </div>
+      <h3 className="font-display text-2xl font-bold text-white sm:text-4xl">Ask anything about the data</h3>
+      <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-slate-400 sm:text-base">
+        You can ask about churn rate, segment mix, contract patterns, customer counts, averages, trends, and what the active data implies for retention strategy.
+      </p>
     </div>
   );
 }
@@ -621,55 +731,33 @@ export default function ConsultantPage() {
     setMessages([]);
   };
 
+  const handleEndSession = () => {
+    clearConsultantHistory();
+    clearConsultantProfile();
+    setMessages([]);
+    setInput('');
+    setConsultantProfileState({ userName: '', companyName: '', updatedAt: null });
+    setProfileDraft({ userName: '', companyName: '', updatedAt: null });
+    toast.success('Consultant session ended');
+  };
+
   const churnSummary = dataSummary?.target?.positiveRate;
   const topInsight = dataSummary?.insights?.[0];
+  const hasUserMessages = messages.some((message) => message.role === 'user');
 
   return (
     <Layout title="AI Consultant">
-      <SectionHeader
-        title="AI Business Consultant"
-        subtitle="Ask about the active data, explore churn insights, and get telecom strategy support grounded in your selected dataset."
-        icon={MessageSquare}
-        action={<Badge color="emerald">Advisory Workspace</Badge>}
-      />
+      <div className="hidden sm:block">
+        <SectionHeader
+          title="AI Business Consultant"
+          subtitle="Ask about the active data, explore churn insights, and get telecom strategy support grounded in your selected dataset."
+          icon={MessageSquare}
+          action={<Badge color="emerald">Advisory Workspace</Badge>}
+        />
+      </div>
 
       <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[0.95fr_2.05fr] lg:items-start lg:gap-6">
         <div className="order-2 space-y-4 lg:order-1">
-          {!profileReady && (
-            <Card className="p-4 sm:p-5">
-              <div className="mb-3 flex items-center gap-2">
-                <User className="h-4 w-4 text-sky-400" />
-                <span className="text-sm font-semibold text-white">Consultant setup</span>
-              </div>
-              <p className="mb-4 text-sm leading-relaxed text-slate-400">
-                Before chat starts, tell me your preferred name and your organisation so the conversation can be personalised.
-              </p>
-              <div className="space-y-3">
-                <div>
-                  <label className="mb-1 block text-xs uppercase tracking-wide text-slate-500">Preferred name</label>
-                  <input
-                    value={profileDraft.userName || ''}
-                    onChange={(event) => setProfileDraft((prev) => ({ ...prev, userName: event.target.value }))}
-                    className="input-field w-full rounded-2xl px-3 py-3 text-sm"
-                    placeholder="Enter your preferred name"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs uppercase tracking-wide text-slate-500">Organisation</label>
-                  <input
-                    value={profileDraft.companyName || ''}
-                    onChange={(event) => setProfileDraft((prev) => ({ ...prev, companyName: event.target.value }))}
-                    className="input-field w-full rounded-2xl px-3 py-3 text-sm"
-                    placeholder="Enter your organisation name"
-                  />
-                </div>
-                <Button icon={Building2} onClick={handleSaveProfile} className="w-full">
-                  Start Consultant Session
-                </Button>
-              </div>
-            </Card>
-          )}
-
           <Card className="hidden p-4 sm:p-5 lg:block">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Active Workspace</div>
@@ -728,7 +816,7 @@ export default function ConsultantPage() {
           </Card>
         </div>
 
-        <Card className="order-1 flex h-[calc(100svh-8.5rem)] min-h-0 max-h-[calc(100svh-8.5rem)] flex-col overflow-hidden p-0 sm:h-[calc(100svh-7.5rem)] sm:max-h-[calc(100svh-7.5rem)] lg:order-2 lg:h-[calc(100svh-6rem)] lg:max-h-[calc(100svh-6rem)]">
+        <Card className="order-1 flex h-[calc(100svh-12rem)] min-h-0 max-h-[calc(100svh-12rem)] flex-col overflow-hidden p-0 sm:h-[calc(100svh-8.75rem)] sm:max-h-[calc(100svh-8.75rem)] lg:order-2 lg:h-[calc(100svh-4.75rem)] lg:max-h-[calc(100svh-4.75rem)]">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--border)] px-4 py-4 sm:px-5">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 overflow-hidden rounded-full border border-emerald-500/20 bg-emerald-500/12">
@@ -744,10 +832,17 @@ export default function ConsultantPage() {
               </div>
             </div>
 
-            {messages.length > 0 && profileReady && (
-              <Button icon={Trash2} variant="ghost" size="sm" onClick={handleClearChat}>
-                Clear
-              </Button>
+            {profileReady && (
+              <div className="flex items-center gap-2">
+                {messages.length > 0 && (
+                  <Button icon={Trash2} variant="ghost" size="sm" onClick={handleClearChat}>
+                    Clear
+                  </Button>
+                )}
+                <Button icon={LogOut} variant="ghost" size="sm" onClick={handleEndSession}>
+                  End Session
+                </Button>
+              </div>
             )}
 
             {profileReady && (
@@ -763,61 +858,45 @@ export default function ConsultantPage() {
           </div>
 
           <div className="consultant-chat-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
-            {!profileReady ? (
-              <div className="flex h-full min-h-[14rem] flex-col items-center justify-center text-center">
-                <div className="rounded-[28px] border border-sky-500/20 bg-sky-500/6 p-6">
-                  <div className="mx-auto mb-3 h-16 w-16 overflow-hidden rounded-full border border-emerald-500/20">
+            <div className="space-y-4">
+              {!profileReady ? (
+                <ConsultantSetupCard
+                  profileDraft={profileDraft}
+                  setProfileDraft={setProfileDraft}
+                  onSave={handleSaveProfile}
+                />
+              ) : !hasUserMessages ? (
+                <ConsultantStarterCard />
+              ) : null}
+
+              {messages.map((message, index) => (
+                <MessageBubble key={`${message.timestamp}-${index}`} msg={message} />
+              ))}
+
+              {loading && (
+                <div className="flex gap-3">
+                  <div className="h-9 w-9 flex-shrink-0 overflow-hidden rounded-full border border-emerald-500/20 bg-emerald-500/10">
                     <ConsultantAvatar />
                   </div>
-                  <h3 className="font-display mb-2 text-2xl font-bold text-white">Personalise your consultant</h3>
-                  <p className="max-w-md text-sm leading-relaxed text-slate-400">
-                    Enter your preferred name and organisation first. After that, you can ask direct questions about the active dataset, get insights from the data, and use the suggested prompts.
-                  </p>
-                </div>
-              </div>
-            ) : messages.length === 0 ? (
-              <div className="flex h-full min-h-[14rem] flex-col items-center justify-center text-center">
-                <div className="rounded-[28px] border border-emerald-500/20 bg-emerald-500/6 p-6">
-                  <div className="mx-auto mb-3 h-16 w-16 overflow-hidden rounded-full border border-emerald-500/20">
-                    <ConsultantAvatar />
-                  </div>
-                  <h3 className="font-display mb-2 text-2xl font-bold text-white">Ask anything about the data</h3>
-                  <p className="max-w-md text-sm leading-relaxed text-slate-400">
-                    You can ask about churn rate, segment mix, contract patterns, customer counts, averages, trends, and what the active data implies for retention strategy.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {messages.map((message, index) => (
-                  <MessageBubble key={`${message.timestamp}-${index}`} msg={message} />
-                ))}
-
-                {loading && (
-                  <div className="flex gap-3">
-                    <div className="h-9 w-9 flex-shrink-0 overflow-hidden rounded-full border border-emerald-500/20 bg-emerald-500/10">
-                      <ConsultantAvatar />
-                    </div>
-                    <div className="chat-assistant px-4 py-3">
-                      <div className="flex h-5 items-center gap-1">
-                        {[0, 1, 2].map((dot) => (
-                          <span
-                            key={dot}
-                            className="h-2 w-2 animate-bounce rounded-full bg-emerald-500"
-                            style={{ animationDelay: `${dot * 0.15}s` }}
-                          />
-                        ))}
-                      </div>
+                  <div className="chat-assistant px-4 py-3">
+                    <div className="flex h-5 items-center gap-1">
+                      {[0, 1, 2].map((dot) => (
+                        <span
+                          key={dot}
+                          className="h-2 w-2 animate-bounce rounded-full bg-emerald-500"
+                          style={{ animationDelay: `${dot * 0.15}s` }}
+                        />
+                      ))}
                     </div>
                   </div>
-                )}
+                </div>
+              )}
 
-                <div ref={bottomRef} />
-              </div>
-            )}
+              <div ref={bottomRef} />
+            </div>
           </div>
 
-          <div className="border-t border-[color:var(--border)] px-4 py-3 sm:px-5">
+          <div className="shrink-0 border-t border-[color:var(--border)] bg-[color:var(--bg-card-strong)] px-4 py-3 sm:px-5">
             <div className="mb-2 hidden items-center gap-2 text-xs text-slate-500 sm:flex">
               <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
               Ask questions about the active data, or tap a prompt below to get started quickly.

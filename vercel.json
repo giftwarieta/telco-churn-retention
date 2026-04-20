@@ -11,11 +11,11 @@
   },
   "rewrites": [
     {
-      "source": "/api/backend",
+      "source": "/api/",
       "destination": "/api"
     },
     {
-      "source": "/api/backend/:path*",
+      "source": "/api/:path*",
       "destination": "/api/:path*"
     }
   ],

@@ -613,6 +613,7 @@ select.input-field {
 
 .insights-chart-scroll {
   width: 100%;
+  overflow: visible;
 }
 
 .insights-chart-stage {
@@ -631,7 +632,7 @@ select.input-field {
   }
 
   .insights-chart-stage {
-    min-width: 34rem;
+    min-width: 29rem;
   }
 
   .responsive-table {
