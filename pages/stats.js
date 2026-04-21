@@ -38,27 +38,34 @@ function formatDate(value) {
   return new Date(value).toLocaleString();
 }
 
+function formatStorageSource(storageMeta) {
+  if (!storageMeta?.configured) return 'Analytics store not configured';
+  if (storageMeta.error === 'read_failed') return 'Analytics store read failed';
+  if (storageMeta.provider === 'upstash-redis') return 'Upstash Redis';
+  if (storageMeta.provider === 'redis-rest') return 'Redis REST';
+  return 'Serverless database';
+}
+
 export default function StatsPage() {
   const [globalStats, setGlobalStats] = useState(null);
   const [globalLoading, setGlobalLoading] = useState(true);
 
   const loadGlobal = async (skipCache = false) => {
-    setGlobalLoading(true);
-    try {
-      if (!skipCache) {
-        const cached = loadGlobalCache();
-        if (cached) {
-          setGlobalStats(cached);
-          setGlobalLoading(false);
-          return;
-        }
-      }
+    const cached = skipCache ? null : loadGlobalCache();
+    setGlobalLoading(!cached);
 
+    if (cached) {
+      setGlobalStats(cached);
+    }
+
+    try {
       const data = await fetchGlobalStats();
       setGlobalStats(data);
       saveGlobalCache(data);
     } catch {
-      setGlobalStats(null);
+      if (!cached) {
+        setGlobalStats(null);
+      }
     } finally {
       setGlobalLoading(false);
     }
@@ -246,9 +253,10 @@ export default function StatsPage() {
                 </div>
                 <div className="rounded-2xl bg-white/3 px-4 py-3">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">Data source</div>
-                  <div className="mt-1 text-white">
-                    Serveless Database
-                  </div>
+                  <div className="mt-1 text-white">{formatStorageSource(storageMeta)}</div>
+                  {storageMeta?.key ? (
+                    <div className="mt-1 font-mono text-xs text-slate-500">Connected</div>
+                  ) : null}
                 </div>
               </div>
             </Card>
