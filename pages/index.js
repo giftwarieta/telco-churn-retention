@@ -213,6 +213,10 @@ export default function HomePage() {
           </h1>
 
           <p className="mt-4 mx-auto max-w-2xl text-sm leading-relaxed text-slate-400 sm:text-base lg:mx-0">
+            This application was built by Warieta Gift Ejovwoke for demo purpose and part of portfolio project.
+          </p>
+
+          <p className="mt-4 mx-auto max-w-2xl text-sm leading-relaxed text-slate-400 sm:text-base lg:mx-0">
             Use one guided workspace to score churn risk, explain model behaviour, evaluate retention economics, and move from analytics into practical customer action.
           </p>
 

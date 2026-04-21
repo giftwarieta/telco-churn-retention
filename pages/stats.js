@@ -38,14 +38,6 @@ function formatDate(value) {
   return new Date(value).toLocaleString();
 }
 
-function formatStorageSource(storageMeta) {
-  if (!storageMeta?.configured) return 'Analytics store not configured';
-  if (storageMeta.error === 'read_failed') return 'Analytics store read failed';
-  if (storageMeta.provider === 'upstash-redis') return 'Upstash Redis';
-  if (storageMeta.provider === 'redis-rest') return 'Redis REST';
-  return 'Serverless database';
-}
-
 export default function StatsPage() {
   const [globalStats, setGlobalStats] = useState(null);
   const [globalLoading, setGlobalLoading] = useState(true);
@@ -77,7 +69,6 @@ export default function StatsPage() {
 
   const stats = globalStats || {};
   const riskTotal = (stats.highRiskDetected || 0) + (stats.mediumRiskDetected || 0) + (stats.lowRiskDetected || 0);
-  const storageMeta = stats._storage || null;
 
   const globalItems = [
     { label: 'Total Predictions', key: 'totalPredictions', icon: Brain, color: 'cyan', subValue: `${stats.batchFilesProcessed || 0} batch files` },
@@ -250,16 +241,6 @@ export default function StatsPage() {
                 <div className="rounded-2xl bg-white/3 px-4 py-3">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">Last updated</div>
                   <div className="mt-1 font-mono text-white">{formatDate(stats.lastUpdated)}</div>
-                </div>
-                <div className="rounded-2xl bg-white/3 px-4 py-3">
-                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Data source</div>
-                  <div className="mt-1 text-white">{formatStorageSource(storageMeta)}</div>
-                  {storageMeta?.key ? (
-                    <div className="mt-1 font-mono text-xs text-slate-500">Connected</div>
-                  ) : null}
-                  {storageMeta?.message ? (
-                    <div className="mt-2 text-xs leading-relaxed text-amber-300">{storageMeta.message}</div>
-                  ) : null}
                 </div>
               </div>
             </Card>
