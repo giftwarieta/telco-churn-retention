@@ -56,7 +56,7 @@ function normaliseStoredStats(hash) {
 }
 
 async function getStats() {
-  const stored = await runRedisCommand('hgetall', [STATS_KEY]);
+  const stored = await runRedisCommand('HGETALL', [STATS_KEY], { readOnly: true });
   return normaliseStoredStats(stored);
 }
 
@@ -109,7 +109,11 @@ export default async function handler(req, res) {
       console.error('Global stats read error:', error);
       return res.status(200).json({
         ...defaultStats,
-        _storage: { ...storage, error: 'read_failed' },
+        _storage: {
+          ...storage,
+          error: 'read_failed',
+          message: error?.message || 'Unknown Redis read error',
+        },
       });
     }
   }
@@ -135,7 +139,11 @@ export default async function handler(req, res) {
       console.error('Global stats write error:', error);
       return res.status(200).json({
         ok: false,
-        _storage: { ...storage, error: 'write_failed' },
+        _storage: {
+          ...storage,
+          error: 'write_failed',
+          message: error?.message || 'Unknown Redis write error',
+        },
       });
     }
   }

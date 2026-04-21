@@ -257,6 +257,9 @@ export default function StatsPage() {
                   {storageMeta?.key ? (
                     <div className="mt-1 font-mono text-xs text-slate-500">Connected</div>
                   ) : null}
+                  {storageMeta?.message ? (
+                    <div className="mt-2 text-xs leading-relaxed text-amber-300">{storageMeta.message}</div>
+                  ) : null}
                 </div>
               </div>
             </Card>
