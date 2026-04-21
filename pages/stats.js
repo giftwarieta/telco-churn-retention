@@ -247,9 +247,7 @@ export default function StatsPage() {
                 <div className="rounded-2xl bg-white/3 px-4 py-3">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">Data source</div>
                   <div className="mt-1 text-white">
-                    {storageMeta?.configured
-                      ? `Redis (${storageMeta.provider || 'configured'})`
-                      : 'Redis not configured'}
+                    Serveless Database
                   </div>
                 </div>
               </div>
