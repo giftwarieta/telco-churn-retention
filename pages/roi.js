@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Layout from '../components/Layout';
+import Link from 'next/link';
+import { useDataSource } from '../components/DataOnboarding';
 import { SectionHeader, Card, Badge } from '../components/ui';
 import {
   ArrowUpRight,
@@ -27,6 +29,7 @@ import {
 } from 'recharts';
 import { calculateROI } from '../lib/api';
 import { addSessionEvent, pushGlobalStats, updateStats } from '../lib/analytics';
+import { getActiveDataSummary, getTrainingSession } from '../lib/workspace';
 
 // --- CURRENCY CONFIGURATION ---
 const CURRENCIES = [
@@ -144,9 +147,11 @@ function KpiCard({ item }) {
 }
 
 export default function ROIPage() {
+  const dataSource = useDataSource();
   // --- STATE ---
   const [currency, setCurrency] = useState(CURRENCIES[0]);
   const [isLocatingCurrency, setIsLocatingCurrency] = useState(true);
+  const [hasCustomModel, setHasCustomModel] = useState(false);
   
   const [params, setParams] = useState({
     totalCustomers: 10000,
@@ -159,6 +164,35 @@ export default function ROIPage() {
   
   const [result, setResult] = useState(null);
   const [roiError, setRoiError] = useState(null);
+
+  useEffect(() => {
+    const trainingSession = getTrainingSession();
+    const summary = getActiveDataSummary();
+    const sessionRecall = Number(trainingSession?.result?.recall || 0);
+    const monthlyChargesMean = Number(summary?.numeric?.find((item) => item.column === 'MonthlyCharges')?.mean || 0);
+    const totalChargesMean = Number(summary?.numeric?.find((item) => item.column === 'TotalCharges')?.mean || 0);
+    const tenureMean = Number(summary?.numeric?.find((item) => item.column === 'tenure')?.mean || 0);
+    const churnRate = typeof summary?.target?.positiveRate === 'number' ? summary.target.positiveRate / 100 : null;
+    const sessionModelAvailable = Boolean(trainingSession?.sessionModel?.artifact);
+
+    setHasCustomModel(sessionModelAvailable);
+
+    if (dataSource === 'custom' && summary) {
+      const derivedArpu = monthlyChargesMean > 0 ? monthlyChargesMean : 8500;
+      const derivedClv = totalChargesMean > 0 ? totalChargesMean : derivedArpu * Math.max(tenureMean || 12, 12);
+      const derivedRetentionCost = Math.max(Math.round(derivedArpu * 0.2), 50);
+
+      setParams((prev) => ({
+        ...prev,
+        totalCustomers: Math.max(summary.rowCount || prev.totalCustomers, 10),
+        churnRate: churnRate ?? prev.churnRate,
+        avgARPU: derivedArpu,
+        avgCLV: derivedClv,
+        retentionCostPerCustomer: derivedRetentionCost,
+        retentionRate: sessionRecall > 0 ? sessionRecall : prev.retentionRate,
+      }));
+    }
+  }, [dataSource]);
 
   // --- IP GEOLOCATION EFFECT ---
   useEffect(() => {
@@ -213,6 +247,32 @@ export default function ROIPage() {
     }).format(value || 0);
   };
 
+  const currencySymbol = useMemo(() => {
+    const parts = new Intl.NumberFormat(currency.locale, {
+      style: 'currency',
+      currency: currency.code,
+      currencyDisplay: 'narrowSymbol',
+      maximumFractionDigits: 0,
+    }).formatToParts(0);
+
+    return parts.find((part) => part.type === 'currency')?.value || currency.code;
+  }, [currency.code, currency.locale]);
+
+  const fmtAxisCurrency = (value) => {
+    const absoluteValue = Math.abs(Number(value) || 0);
+    const sign = value < 0 ? '-' : '';
+
+    if (absoluteValue >= 1_000_000) {
+      return `${sign}${currencySymbol}${(absoluteValue / 1_000_000).toFixed(1)}M`;
+    }
+
+    if (absoluteValue >= 1_000) {
+      return `${sign}${currencySymbol}${(absoluteValue / 1_000).toFixed(0)}K`;
+    }
+
+    return `${sign}${currencySymbol}${Math.round(absoluteValue)}`;
+  };
+
   // --- HANDLERS ---
   const set = (key, value) => setParams((prev) => ({ ...prev, [key]: parseFloat(value) || 0 }));
 
@@ -237,10 +297,16 @@ export default function ROIPage() {
   useEffect(() => {
     calculate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params]); 
+  }, [params, dataSource, hasCustomModel]); 
 
   const calculate = async () => {
     const { totalCustomers, churnRate, avgARPU, retentionCostPerCustomer, retentionRate, avgCLV } = params;
+    if (dataSource === 'custom' && !hasCustomModel) {
+      setRoiError('Complete training on your uploaded dataset first so ROI uses your session model evaluation instead of the default app assumptions.');
+      setResult(null);
+      return;
+    }
+
     try {
       const data = await calculateROI({
         total_customers: totalCustomers,
@@ -287,13 +353,15 @@ export default function ROIPage() {
     // Dynamic scenarios based on current retention rate
     const consRate = Math.max(0, params.retentionRate - 0.1);
     const optRate = Math.min(1, params.retentionRate + 0.1);
+    const churningCustomers = result?.churningCustomers ?? Math.round(params.totalCustomers * params.churnRate);
+    const totalRetentionCost = result?.totalRetentionCost ?? churningCustomers * params.retentionCostPerCustomer;
 
     return [
       {
         scenario: 'Conservative',
         shortLabel: 'Low',
         successLabel: `${Math.round(consRate * 100)}% retention`,
-        netROI: result ? Math.round(result.churningCustomers * consRate * params.avgARPU * 12 - result.totalRetentionCost) : 0,
+        netROI: result ? Math.round(churningCustomers * consRate * params.avgCLV - totalRetentionCost) : 0,
       },
       {
         scenario: 'Base Case',
@@ -305,10 +373,10 @@ export default function ROIPage() {
         scenario: 'Optimistic',
         shortLabel: 'High',
         successLabel: `${Math.round(optRate * 100)}% retention`,
-        netROI: result ? Math.round(result.churningCustomers * optRate * params.avgARPU * 12 - result.totalRetentionCost) : 0,
+        netROI: result ? Math.round(churningCustomers * optRate * params.avgCLV - totalRetentionCost) : 0,
       },
     ];
-  }, [params.avgARPU, params.retentionRate, result]);
+  }, [params.avgCLV, params.churnRate, params.retentionCostPerCustomer, params.retentionRate, params.totalCustomers, result]);
 
   // --- CHART TOOLTIPS ---
   const ScenarioTooltip = ({ active, payload, label }) => {
@@ -342,6 +410,22 @@ export default function ROIPage() {
         subtitle="Stress-test retention economics with a highly responsive planning view and executive summary."
         icon={DollarSign}
       />
+
+      {dataSource === 'custom' && !hasCustomModel ? (
+        <Card className="mb-6 border-amber-500/20 bg-amber-500/10 p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-amber-400">Custom ROI needs your trained session model</div>
+              <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                The ROI planner will use the uploaded dataset summary and your training evaluation for this browser session, but only after the custom model has been trained.
+              </p>
+            </div>
+            <Link href="/train" className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/15 px-3 py-1.5 text-xs font-medium text-amber-300 transition-colors hover:bg-amber-500/20">
+              Go To Training
+            </Link>
+          </div>
+        </Card>
+      ) : null}
 
       {/* Main Layout Grid */}
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(20rem,320px)_1fr] xl:grid-cols-[380px_1fr]">
@@ -490,7 +574,7 @@ export default function ROIPage() {
                     </div>
 
                     <div className="min-w-[160px] shrink-0 rounded-3xl border border-white/10 bg-black/20 p-4 shadow-inner sm:p-5">
-                      <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Net ROI (%)</div>
+                      <div className="text-[11px] font-bold uppercase tracking-widest text-slate-400">Net ROI after Intervention (%)</div>
                       <div className={`mt-1.5 text-3xl font-extrabold tracking-tighter sm:text-4xl lg:text-5xl ${result.roiPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {result.roiPercent.toFixed(1)}%
                       </div>
@@ -598,15 +682,16 @@ export default function ROIPage() {
 
                   <div className="h-56 min-h-[220px] w-full flex-1">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={scenarioData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <BarChart data={scenarioData} margin={{ top: 10, right: 10, left: 8, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#ffffff15" vertical={false} />
                         <XAxis dataKey="shortLabel" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 500 }} dy={10} />
                         <YAxis
                           axisLine={false}
                           tickLine={false}
                           tick={{ fill: '#94a3b8', fontSize: 11 }}
-                          tickFormatter={(value) => `${currency.symbol}${(value / 1e6).toFixed(1)}M`}
-                          dx={-10}
+                          tickFormatter={fmtAxisCurrency}
+                          width={84}
+                          tickMargin={10}
                         />
                         <Tooltip cursor={{ fill: '#ffffff05' }} content={<ScenarioTooltip />} />
                         <Bar dataKey="netROI" radius={[6, 6, 0, 0]} maxBarSize={50}>
@@ -633,15 +718,16 @@ export default function ROIPage() {
 
                   <div className="mt-auto h-56 min-h-[220px] w-full flex-1">
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={monthlyProjection} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <LineChart data={monthlyProjection} margin={{ top: 10, right: 10, left: 8, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#ffffff15" vertical={false} />
                         <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 500 }} dy={10} />
                         <YAxis
                           axisLine={false}
                           tickLine={false}
                           tick={{ fill: '#94a3b8', fontSize: 11 }}
-                          tickFormatter={(value) => `${currency.symbol}${(value / 1e6).toFixed(1)}M`}
-                          dx={-10}
+                          tickFormatter={fmtAxisCurrency}
+                          width={84}
+                          tickMargin={10}
                         />
                         <Tooltip content={<ProjectionTooltip />} />
                         <Line type="monotone" dataKey="cumRevenue" stroke="#22d3ee" strokeWidth={3} dot={{ r: 3, strokeWidth: 2 }} activeDot={{ r: 6, strokeWidth: 0 }} name="Revenue" />

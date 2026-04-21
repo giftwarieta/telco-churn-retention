@@ -1,12 +1,15 @@
-import { useCallback, useState } from 'react';
+import Link from 'next/link';
+import { useCallback, useEffect, useState } from 'react';
 import Papa from 'papaparse';
 import { useDropzone } from 'react-dropzone';
 import toast from 'react-hot-toast';
 import { AlertTriangle, BarChart2, Brain, CheckCircle, Download, FileText, Server, Upload, User } from 'lucide-react';
+import { useDataSource } from '../components/DataOnboarding';
 import Layout from '../components/Layout';
 import { Button, Card, EmptyState, ProgressBar, RiskBadge, SectionHeader } from '../components/ui';
 import { predictBatch, predictSingle } from '../lib/api';
 import { addSessionEvent, pushGlobalStats, updateStats } from '../lib/analytics';
+import { getSessionSampleCustomer, getTrainingSession } from '../lib/workspace';
 
 const DEFAULT_FORM = {
   gender: 'Male',
@@ -77,6 +80,7 @@ function BackendError({ message }) {
 }
 
 export default function PredictPage() {
+  const dataSource = useDataSource();
   const [tab, setTab] = useState('single');
   const [form, setForm] = useState(DEFAULT_FORM);
   const [result, setResult] = useState(null);
@@ -86,8 +90,32 @@ export default function PredictPage() {
   const [batchResults, setBatchResults] = useState(null);
   const [batchError, setBatchError] = useState(null);
   const [batchLoading, setBatchLoading] = useState(false);
+  const [hasCustomModel, setHasCustomModel] = useState(false);
+
+  useEffect(() => {
+    const trainingSession = getTrainingSession();
+    setHasCustomModel(Boolean(trainingSession?.sessionModel?.artifact));
+
+    if (dataSource === 'custom') {
+      const sample = getSessionSampleCustomer();
+      if (sample) {
+        const nextForm = { ...DEFAULT_FORM };
+        Object.keys(DEFAULT_FORM).forEach((key) => {
+          if (sample[key] !== undefined && sample[key] !== null && sample[key] !== '') {
+            nextForm[key] = String(sample[key]);
+          }
+        });
+        setForm(nextForm);
+      }
+    }
+  }, [dataSource]);
 
   const handleSinglePredict = async () => {
+    if (dataSource === 'custom' && !hasCustomModel) {
+      toast.error('Complete custom training first so predictions use your session model.');
+      return;
+    }
+
     setLoading(true);
     setResult(null);
     setError(null);
@@ -135,6 +163,10 @@ export default function PredictPage() {
 
   const handleBatchPredict = async () => {
     if (!batchFile) { toast.error('Please upload a CSV file'); return; }
+    if (dataSource === 'custom' && !hasCustomModel) {
+      toast.error('Complete custom training first so batch prediction uses your session model.');
+      return;
+    }
     setBatchLoading(true);
     setBatchResults(null);
     setBatchError(null);
@@ -191,6 +223,22 @@ export default function PredictPage() {
         subtitle="Run a single customer assessment or upload a CSV for batch scoring."
         icon={Brain}
       />
+
+      {dataSource === 'custom' && !hasCustomModel ? (
+        <Card className="mb-6 border-amber-500/20 bg-amber-500/10 p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-amber-400">Custom session model required</div>
+              <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                This route is set to your uploaded dataset, so prediction will stay locked to your session until you finish training a model on that data.
+              </p>
+            </div>
+            <Link href="/train">
+              <Button icon={Brain}>Go To Training</Button>
+            </Link>
+          </div>
+        </Card>
+      ) : null}
 
       <div className="mb-6 inline-flex w-full max-w-sm gap-1 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg-card)] p-1">
         {['single', 'batch'].map((mode) => (
