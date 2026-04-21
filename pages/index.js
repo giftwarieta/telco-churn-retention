@@ -12,7 +12,6 @@ import {
   FileUp,
   LineChart,
   Lock,
-  RefreshCcw,
   Rocket,
   Shield,
   Target,
@@ -96,11 +95,6 @@ export default function HomePage() {
     setWorkspaceContext(getWorkspaceContext());
   }, []);
 
-  const handleChangeDataRoute = () => {
-    resetDataSourceSelection();
-    router.reload();
-  };
-
   const handleChooseDefaultPath = () => {
     try {
       localStorage.setItem(STORAGE_KEY, 'default');
@@ -151,10 +145,11 @@ export default function HomePage() {
           <button
             type="button"
             onClick={handleChooseDefaultPath}
+            disabled={dataSource === 'default'}
             className={`w-full rounded-3xl border p-4 text-left transition-all sm:p-4 ${
               dataSource === 'default'
-                ? 'border-sky-500/35 bg-sky-500/10 shadow-[0_0_0_1px_rgba(14,165,233,0.08)]'
-                : 'border-[color:var(--border)] bg-white/3 hover:border-sky-500/25 hover:bg-sky-500/6'
+                ? 'cursor-not-allowed border-sky-500/35 bg-sky-500/10 shadow-[0_0_0_1px_rgba(14,165,233,0.08)]'
+                : 'cursor-pointer border-[color:var(--border)] bg-white/3 hover:border-sky-500/25 hover:bg-sky-500/6'
             }`}
           >
             <div className="flex items-start gap-3">
@@ -176,10 +171,11 @@ export default function HomePage() {
           <button
             type="button"
             onClick={handleChooseCustomPath}
+            disabled={dataSource === 'custom'}
             className={`w-full rounded-3xl border p-4 text-left transition-all sm:p-4 ${
               dataSource === 'custom'
-                ? 'border-purple-500/35 bg-purple-500/10 shadow-[0_0_0_1px_rgba(168,85,247,0.08)]'
-                : 'border-[color:var(--border)] bg-white/3 hover:border-purple-500/25 hover:bg-purple-500/6'
+                ? 'cursor-not-allowed border-purple-500/35 bg-purple-500/10 shadow-[0_0_0_1px_rgba(168,85,247,0.08)]'
+                : 'cursor-pointer border-[color:var(--border)] bg-white/3 hover:border-purple-500/25 hover:bg-purple-500/6'
             }`}
           >
             <div className="flex items-start gap-3">
@@ -197,21 +193,6 @@ export default function HomePage() {
               </div>
             </div>
           </button>
-        </div>
-
-        <div className="mt-4 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg-soft)] p-4">
-          <div className="flex flex-col items-center justify-between gap-3 text-center sm:flex-row sm:text-left">
-            <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Workspace guide</div>
-              <div className="mt-1 text-sm font-medium text-white">Pick a route, confirm the model context, then move into prediction or training.</div>
-            </div>
-            <Button variant="ghost" size="sm" icon={RefreshCcw} onClick={handleChangeDataRoute}>
-              Change route
-            </Button>
-          </div>
-          <div className="mt-3 text-xs leading-relaxed text-slate-500">
-            The overview is designed as your starting point, while detailed analytics live in the dedicated pages across the app.
-          </div>
         </div>
       </div>
     </Card>

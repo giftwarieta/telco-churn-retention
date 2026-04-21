@@ -1,11 +1,13 @@
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { BarChart, Bar, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Info, RefreshCw, TrendingUp } from 'lucide-react';
+import { useDataSource } from '../components/DataOnboarding';
 import Layout from '../components/Layout';
 import { Badge, Button, Card, ProgressBar, SectionHeader } from '../components/ui';
 import { pushGlobalStats, updateStats } from '../lib/analytics';
 import { getLIMEExplanation, getModelMetrics, getSHAPExplanation } from '../lib/api';
-import { getDefaultWorkspaceContext, getWorkspaceContext } from '../lib/workspace';
+import { getDefaultWorkspaceContext, getSessionSampleCustomer, getTrainingSession, getWorkspaceContext } from '../lib/workspace';
 
 const DEMO_SHAP = [
   { feature: 'Contract_Month-to-month', shap: 0.38, direction: 'positive' },
@@ -145,6 +147,7 @@ function ShapSignalList({ data = [] }) {
 }
 
 export default function InsightsPage() {
+  const dataSource = useDataSource();
   const [tab, setTab] = useState('shap');
   const [shapData, setShapData] = useState(DEMO_SHAP);
   const [limeData, setLimeData] = useState(DEMO_LIME);
@@ -152,10 +155,23 @@ export default function InsightsPage() {
   const [loading, setLoading] = useState(false);
   const [workspaceContext, setWorkspaceContext] = useState(getDefaultWorkspaceContext());
   const [isCompactViewport, setIsCompactViewport] = useState(false);
+  const [hasCustomModel, setHasCustomModel] = useState(false);
+  const [sessionSampleCustomer, setSessionSampleCustomer] = useState(SAMPLE_CUSTOMER);
 
   useEffect(() => {
     setWorkspaceContext(getWorkspaceContext());
   }, []);
+
+  useEffect(() => {
+    const trainingSession = getTrainingSession();
+    setHasCustomModel(Boolean(trainingSession?.sessionModel?.artifact));
+
+    if (dataSource === 'custom') {
+      setSessionSampleCustomer(getSessionSampleCustomer() || SAMPLE_CUSTOMER);
+    } else {
+      setSessionSampleCustomer(SAMPLE_CUSTOMER);
+    }
+  }, [dataSource]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -175,13 +191,20 @@ export default function InsightsPage() {
   }, []);
 
   const refreshExplanations = async () => {
+    if (dataSource === 'custom' && !hasCustomModel) {
+      setShapData([]);
+      setLimeData([]);
+      setModelMetrics([]);
+      return;
+    }
+
     setLoading(true);
 
     try {
       setWorkspaceContext(getWorkspaceContext());
       const [shapResponse, limeResponse, metricsResponse] = await Promise.all([
         getSHAPExplanation(),
-        getLIMEExplanation(SAMPLE_CUSTOMER),
+        getLIMEExplanation(sessionSampleCustomer),
         getModelMetrics(),
       ]);
 
@@ -191,9 +214,15 @@ export default function InsightsPage() {
       updateStats({ shapAnalysisRun: 1 });
       pushGlobalStats({ shapAnalysisRun: 1 });
     } catch {
-      setShapData(DEMO_SHAP);
-      setLimeData(DEMO_LIME);
-      setModelMetrics(DEMO_METRICS);
+      if (dataSource === 'custom') {
+        setShapData([]);
+        setLimeData([]);
+        setModelMetrics([]);
+      } else {
+        setShapData(DEMO_SHAP);
+        setLimeData(DEMO_LIME);
+        setModelMetrics(DEMO_METRICS);
+      }
     } finally {
       setLoading(false);
     }
@@ -201,7 +230,7 @@ export default function InsightsPage() {
 
   useEffect(() => {
     refreshExplanations();
-  }, []);
+  }, [dataSource, hasCustomModel, sessionSampleCustomer]);
 
   const topPositiveDrivers = shapData.filter((item) => item.direction === 'positive').slice(0, 5);
   const strongestPositiveDriver = shapData.find((item) => item.direction === 'positive');
@@ -234,6 +263,22 @@ export default function InsightsPage() {
           </div>
         }
       />
+
+      {dataSource === 'custom' && !hasCustomModel ? (
+        <Card className="mb-6 border-amber-500/20 bg-amber-500/10 p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-amber-400">Train your custom session model first</div>
+              <p className="mt-1 text-xs leading-relaxed text-slate-400">
+                Explainability for the custom route is generated from your session-trained model, so this page will stay tied to your own uploaded data instead of falling back to the app default.
+              </p>
+            </div>
+            <Link href="/train">
+              <Button icon={TrendingUp}>Go To Training</Button>
+            </Link>
+          </div>
+        </Card>
+      ) : null}
 
       <div className="mb-6 grid w-full max-w-xl grid-cols-3 gap-1 rounded-2xl border border-[color:var(--border)] bg-[color:var(--bg-card)] p-1">
         {['shap', 'lime', 'summary'].map((mode) => (

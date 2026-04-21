@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import io
+import json
 import sys
 import traceback
 from datetime import datetime, timezone
@@ -11,7 +13,7 @@ from typing import Any, Optional
 import joblib
 import numpy as np
 import pandas as pd
-from fastapi import Body, FastAPI, File, HTTPException, UploadFile, APIRouter
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sklearn.compose import ColumnTransformer
@@ -187,6 +189,54 @@ def model_to_dict(model: BaseModel) -> dict[str, Any]:
     if hasattr(model, "model_dump"):
         return model.model_dump()
     return model.dict()
+
+
+def _serialize_model_artifact(model: Any) -> str:
+    buffer = io.BytesIO()
+    joblib.dump(model, buffer)
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+@lru_cache(maxsize=8)
+def _deserialize_model_artifact(artifact: str):
+    payload = base64.b64decode(artifact.encode("ascii"))
+    return joblib.load(io.BytesIO(payload))
+
+
+def _normalise_session_model(payload: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return None
+
+    session_model = payload.get("sessionModel") or payload.get("session_model")
+    if not isinstance(session_model, dict):
+        return None
+
+    artifact = session_model.get("artifact")
+    if not isinstance(artifact, str) or not artifact.strip():
+        return None
+
+    metadata = session_model.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    return {
+        "artifact": artifact,
+        "metadata": metadata,
+    }
+
+
+def _get_session_model(payload: Optional[dict[str, Any]]) -> tuple[Any, dict[str, Any]] | tuple[None, None]:
+    session_model = _normalise_session_model(payload)
+    if not session_model:
+        return None, None
+
+    return _deserialize_model_artifact(session_model["artifact"]), session_model["metadata"]
+
+
+def _custom_feature_defaults(metadata: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    if isinstance(metadata, dict) and isinstance(metadata.get("feature_defaults"), dict):
+        return {**RAW_FEATURE_DEFAULTS, **metadata["feature_defaults"]}
+    return get_model_metadata().get("feature_defaults") or RAW_FEATURE_DEFAULTS
 
 
 # ---------------------------------------------------------
@@ -593,9 +643,9 @@ def _prediction_probability(model: Any, features: pd.DataFrame) -> float:
     return float(probabilities[0][1])
 
 
-def _local_impacts(model: Any, features: pd.DataFrame, limit: int = 6) -> list[dict[str, Any]]:
+def _local_impacts(model: Any, features: pd.DataFrame, limit: int = 6, metadata: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
     baseline = _prediction_probability(model, features)
-    defaults = get_model_metadata().get("feature_defaults") or RAW_FEATURE_DEFAULTS
+    defaults = _custom_feature_defaults(metadata)
     impacts: list[dict[str, Any]] = []
 
     for index, column in enumerate(features.columns):
@@ -624,12 +674,24 @@ def _local_impacts(model: Any, features: pd.DataFrame, limit: int = 6) -> list[d
     return impacts[:limit]
 
 
-def _global_importance() -> list[dict[str, Any]]:
-    model = get_model()
-    metadata = get_model_metadata()
-    transformed_feature_names = list(metadata.get("transformed_feature_names") or get_feature_names())
+def _global_importance(model: Any | None = None, metadata: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
+    active_model = model or get_model()
+    active_metadata = metadata or get_model_metadata()
 
-    estimator = model.named_steps["model"] if hasattr(model, "named_steps") else model
+    transformed_feature_names = list(active_metadata.get("transformed_feature_names") or [])
+    if not transformed_feature_names:
+        try:
+            transformed_feature_names = list(get_feature_names()) if model is None else []
+        except Exception:
+            transformed_feature_names = []
+
+    if not transformed_feature_names and hasattr(active_model, "named_steps") and "preprocessor" in active_model.named_steps:
+        try:
+            transformed_feature_names = list(active_model.named_steps["preprocessor"].get_feature_names_out())
+        except Exception:
+            transformed_feature_names = []
+
+    estimator = active_model.named_steps["model"] if hasattr(active_model, "named_steps") else active_model
 
     if hasattr(estimator, "feature_importances_"):
         importances = np.asarray(estimator.feature_importances_, dtype=float)
@@ -676,6 +738,25 @@ def _local_explanation(customer: CustomerData) -> tuple[list[dict[str, Any]], fl
 
     explanation.sort(key=lambda item: abs(item["shap"]), reverse=True)
     return explanation[:15], baseline
+
+
+def _custom_local_explanation(customer: CustomerData, model: Any, metadata: Optional[dict[str, Any]] = None) -> tuple[list[dict[str, Any]], float]:
+    defaults = _custom_feature_defaults(metadata)
+    features = _ensure_raw_feature_frame(pd.DataFrame([model_to_dict(customer)]), defaults=defaults)
+    baseline = _prediction_probability(model, features)
+    impacts = _local_impacts(model, features, limit=15, metadata=metadata)
+
+    explanation = [
+        {
+            "feature": item["feature"],
+            "shap": round(float(item["impact"]), 4),
+            "weight": round(float(item["impact"]), 4),
+            "direction": "positive" if item["impact"] > 0 else "negative",
+        }
+        for item in impacts
+    ]
+
+    return explanation, baseline
 
 
 def _load_metrics() -> list[dict[str, Any]]:
@@ -768,11 +849,25 @@ def model_metrics():
 
 
 @router.post("/predict")
-def predict(customer: CustomerData):
+def predict(payload: dict[str, Any] = Body(...)):
+    session_model, session_metadata = _get_session_model(payload)
+
     try:
-        model = get_model()
-        features = prepare_features(pd.DataFrame([model_to_dict(customer)]))
-        probability = _prediction_probability(model, features)
+        customer_payload = payload.get("customer") if isinstance(payload.get("customer"), dict) else payload
+        customer = CustomerData(**customer_payload)
+
+        if session_model is not None:
+            features = _ensure_raw_feature_frame(
+                pd.DataFrame([model_to_dict(customer)]),
+                defaults=_custom_feature_defaults(session_metadata),
+            )
+            probability = _prediction_probability(session_model, features)
+            top_factors = _local_impacts(session_model, features, metadata=session_metadata)
+        else:
+            model = get_model()
+            features = prepare_features(pd.DataFrame([model_to_dict(customer)]))
+            probability = _prediction_probability(model, features)
+            top_factors = _local_impacts(model, features)
     except FileNotFoundError:
         raise HTTPException(status_code=503, detail="A trained model is not available in this deployment.")
     except Exception:
@@ -784,18 +879,32 @@ def predict(customer: CustomerData):
         "churn_prediction": prediction,
         "risk_level": get_risk_level(probability),
         "confidence": round(max(probability, 1 - probability), 4),
-        "top_factors": _local_impacts(model, features),
+        "top_factors": top_factors,
     }
 
 
 @router.post("/predict/batch")
-async def predict_batch(file: UploadFile = File(...)):
+async def predict_batch(file: UploadFile = File(...), sessionModel: Optional[str] = Form(default=None)):
     try:
-        model = get_model()
         content = await file.read()
         raw = pd.read_csv(io.StringIO(content.decode("utf-8")))
-        features = prepare_features(raw)
-        probabilities = model.predict_proba(features)[:, 1]
+        session_payload = None
+
+        if sessionModel:
+            try:
+                session_payload = {"sessionModel": json.loads(sessionModel)}
+            except Exception:
+                raise HTTPException(status_code=400, detail="Custom session model payload is invalid.")
+
+        session_model, session_metadata = _get_session_model(session_payload)
+
+        if session_model is not None:
+            features = _ensure_raw_feature_frame(raw, defaults=_custom_feature_defaults(session_metadata))
+            probabilities = session_model.predict_proba(features)[:, 1]
+        else:
+            model = get_model()
+            features = prepare_features(raw)
+            probabilities = model.predict_proba(features)[:, 1]
     except FileNotFoundError:
         raise HTTPException(status_code=503, detail="A trained model is not available in this deployment.")
     except Exception:
@@ -830,15 +939,28 @@ async def predict_batch(file: UploadFile = File(...)):
 
 @router.post("/explain/shap")
 def explain_shap(payload: Optional[dict[str, Any]] = Body(default=None)):
+    session_model, session_metadata = _get_session_model(payload)
+
     if not payload:
         try:
             return {"shap_values": _global_importance()}
         except FileNotFoundError:
             raise HTTPException(status_code=503, detail="A trained model is not available in this deployment.")
 
+    if session_model is not None and not isinstance(payload.get("customer"), dict):
+        try:
+            return {"shap_values": _global_importance(session_model, session_metadata)}
+        except Exception:
+            raise HTTPException(status_code=500, detail="Explainability data could not be generated right now.")
+
     try:
-        customer = CustomerData(**payload)
-        explanation, baseline = _local_explanation(customer)
+        customer_payload = payload.get("customer") if isinstance(payload.get("customer"), dict) else payload
+        customer = CustomerData(**customer_payload)
+        explanation, baseline = (
+            _custom_local_explanation(customer, session_model, session_metadata)
+            if session_model is not None
+            else _local_explanation(customer)
+        )
     except FileNotFoundError:
         raise HTTPException(status_code=503, detail="A trained model is not available in this deployment.")
     except Exception:
@@ -848,9 +970,17 @@ def explain_shap(payload: Optional[dict[str, Any]] = Body(default=None)):
 
 
 @router.post("/explain/lime")
-def explain_lime(customer: CustomerData):
+def explain_lime(payload: dict[str, Any] = Body(...)):
+    session_model, session_metadata = _get_session_model(payload)
+
     try:
-        explanation, baseline = _local_explanation(customer)
+        customer_payload = payload.get("customer") if isinstance(payload.get("customer"), dict) else payload
+        customer = CustomerData(**customer_payload)
+        explanation, baseline = (
+            _custom_local_explanation(customer, session_model, session_metadata)
+            if session_model is not None
+            else _local_explanation(customer)
+        )
     except FileNotFoundError:
         raise HTTPException(status_code=503, detail="A trained model is not available in this deployment.")
     except Exception:
@@ -875,10 +1005,7 @@ def train(params: TrainParams):
         elif params.data_path:
             training_frame = pd.read_csv(params.data_path)
         else:
-            default_candidates = sorted((ROOT_DIR / "data").glob("*.csv"))
-            if not default_candidates:
-                raise HTTPException(status_code=404, detail="No training dataset was found.")
-            training_frame = pd.read_csv(default_candidates[0])
+            training_frame = pd.read_csv(_find_training_dataset_path())
 
         features, target = prepare_training_data(training_frame)
         if len(features) < 10:
@@ -893,13 +1020,34 @@ def train(params: TrainParams):
             stratify=stratify_target,
         )
 
-        estimator = build_training_estimator(params.algorithm)
+        estimator = Pipeline(
+            [
+                ("preprocessor", _build_preprocessor()),
+                ("model", build_training_estimator(params.algorithm)),
+            ]
+        )
         started_at = datetime.now(timezone.utc)
         import time
 
         start_time = time.perf_counter()
         estimator.fit(x_train, y_train)
         elapsed = round(time.perf_counter() - start_time, 2)
+
+        transformed_feature_count = None
+        try:
+            transformed_feature_count = int(
+                len(estimator.named_steps["preprocessor"].get_feature_names_out())
+            )
+        except Exception:
+            transformed_feature_count = None
+
+        transformed_feature_names = []
+        try:
+            transformed_feature_names = [
+                str(name) for name in estimator.named_steps["preprocessor"].get_feature_names_out()
+            ]
+        except Exception:
+            transformed_feature_names = []
 
         y_pred = estimator.predict(x_test)
         if hasattr(estimator, "predict_proba"):
@@ -919,6 +1067,15 @@ def train(params: TrainParams):
         except Exception:
             auc_roc = 0.5
 
+        session_model_metadata = {
+            "algorithm": params.algorithm,
+            "feature_defaults": _extract_default_values(features),
+            "raw_feature_names": RAW_FEATURE_COLUMNS,
+            "transformed_feature_names": transformed_feature_names,
+            "decision_threshold": 0.5,
+            "dataset_name": params.filename or params.data_path or "session-upload.csv",
+        }
+
         return {
             "algorithm": params.algorithm,
             "accuracy": accuracy,
@@ -929,9 +1086,15 @@ def train(params: TrainParams):
             "training_samples": int(len(x_train)),
             "test_samples": int(len(x_test)),
             "feature_count": int(x_train.shape[1]),
+            "transformed_feature_count": transformed_feature_count,
+            "decision_threshold": 0.5,
             "training_time": elapsed,
             "trained_at": started_at.isoformat(),
             "dataset_name": params.filename or params.data_path or "session-upload.csv",
+            "session_model": {
+                "artifact": _serialize_model_artifact(estimator),
+                "metadata": session_model_metadata,
+            },
             "model_evaluation": [
                 {"label": "Accuracy", "value": accuracy},
                 {"label": "AUC-ROC", "value": auc_roc},
@@ -953,17 +1116,19 @@ def train(params: TrainParams):
         }
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="Training could not be completed right now.")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Training could not be completed right now: {exc}")
 
 
 @router.post("/roi/calculate")
 def roi_calculate(params: ROIParams):
     churning_customers = round(params.total_customers * params.churn_rate)
-    revenue_at_risk = churning_customers * params.avg_arpu * 12
+    revenue_at_risk = churning_customers * params.avg_clv
     total_retention_cost = churning_customers * params.retention_cost
     saved_customers = round(churning_customers * params.success_rate)
-    revenue_recovered = saved_customers * params.avg_arpu * 12
+    revenue_recovered = saved_customers * params.avg_clv
     clv_saved = saved_customers * params.avg_clv
     net_roi = revenue_recovered - total_retention_cost
     roi_percent = (net_roi / total_retention_cost * 100) if total_retention_cost > 0 else 0

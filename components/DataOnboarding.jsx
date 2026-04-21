@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { CheckCircle, ChevronRight, Database, Download, FileUp, Sparkles, Upload, X } from 'lucide-react';
-import { clearWorkspaceSession, saveCustomDatasetSession, setDefaultWorkspaceModel } from '../lib/workspace';
+import { clearCustomDatasetSession, clearWorkspaceSession, saveCustomDatasetSession, setDefaultWorkspaceModel } from '../lib/workspace';
 
 export const STORAGE_KEY = 'churniq_data_source';
 const NO_ONBOARD_PATHS = ['/about'];
@@ -86,16 +86,27 @@ export default function DataOnboarding() {
   const handleFileChange = async (file) => {
     if (!file || !file.name.toLowerCase().endsWith('.csv')) return;
 
-    setUploadedFile(file);
+    setUploadedFile(null);
     setSavingUpload(true);
 
     try {
-      await saveCustomDatasetSession(file);
-      setSource('custom');
-      router.push('/train');
+      const stored = await saveCustomDatasetSession(file);
+      setUploadedFile(stored);
     } finally {
       setSavingUpload(false);
     }
+  };
+
+  const handleCancelUpload = () => {
+    clearCustomDatasetSession();
+    setUploadedFile(null);
+    setSavingUpload(false);
+  };
+
+  const handleProceedToTraining = () => {
+    if (!uploadedFile || savingUpload) return;
+    setSource('custom');
+    router.push('/train');
   };
 
   const handleDrop = (event) => {
@@ -232,7 +243,7 @@ export default function DataOnboarding() {
                 <div className="mb-4">
                   <h2 className="text-lg font-semibold text-white">Set up personalized training</h2>
                   <p className="mt-1 text-sm text-slate-400">
-                    Upload a template-based CSV and continue directly to training.
+                     Upload a template-based CSV, then choose whether to continue to training or cancel the upload.
                   </p>
                 </div>
 
@@ -287,20 +298,20 @@ export default function DataOnboarding() {
                         className="hidden"
                         onChange={(event) => handleFileChange(event.target.files[0])}
                       />
-                      {uploadedFile ? (
-                        <div className="flex items-center justify-center gap-2">
-                          <CheckCircle className="h-4 w-4 text-emerald-500" />
-                          <span className="max-w-[80%] truncate text-sm font-medium text-emerald-400">
-                            {savingUpload ? 'Preparing training workspace...' : uploadedFile.name}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setUploadedFile(null);
-                            }}
-                            className="text-slate-500 hover:text-slate-300"
-                          >
+                       {uploadedFile ? (
+                         <div className="flex items-center justify-center gap-2">
+                           <CheckCircle className="h-4 w-4 text-emerald-500" />
+                           <span className="max-w-[80%] truncate text-sm font-medium text-emerald-400">
+                             {savingUpload ? 'Preparing training workspace...' : uploadedFile.name}
+                           </span>
+                           <button
+                             type="button"
+                             onClick={(event) => {
+                               event.stopPropagation();
+                               handleCancelUpload();
+                             }}
+                             className="text-slate-500 hover:text-slate-300"
+                           >
                             <X className="h-3.5 w-3.5" />
                           </button>
                         </div>
@@ -316,11 +327,37 @@ export default function DataOnboarding() {
                   <div className="rounded-2xl border border-white/8 bg-white/4 p-3">
                     <div className="mb-2 flex items-center gap-3">
                       <div className={`flex h-7 w-7 items-center justify-center rounded-full border text-xs font-bold ${uploadedFile ? 'border-emerald-500/30 bg-emerald-500/15 text-emerald-400' : 'border-slate-700 bg-slate-800 text-slate-600'}`}>3</div>
-                      <div className={`text-sm font-medium ${uploadedFile ? 'text-white' : 'text-slate-500'}`}>Redirect straight to training</div>
+                      <div className={`text-sm font-medium ${uploadedFile ? 'text-white' : 'text-slate-500'}`}>Choose what to do next</div>
                     </div>
-                    <p className="text-xs leading-relaxed text-slate-500">
-                      As soon as the file is uploaded, you are redirected to the training page to choose and run the model on that temporary dataset.
-                    </p>
+                    {uploadedFile ? (
+                      <div>
+                        <p className="text-xs leading-relaxed text-slate-500">
+                          Your CSV is loaded into this browser session only. Continue to training to evaluate a custom model, or cancel to remove the upload.
+                        </p>
+                        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                          <button
+                            onClick={handleProceedToTraining}
+                            type="button"
+                            className="w-full rounded-2xl bg-purple-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-purple-500 sm:w-auto"
+                            disabled={savingUpload}
+                          >
+                            Proceed to Training
+                          </button>
+                          <button
+                            onClick={handleCancelUpload}
+                            type="button"
+                            className="w-full rounded-2xl border border-[color:var(--border)] bg-white/3 px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:border-slate-500/40 hover:bg-white/5 sm:w-auto"
+                            disabled={savingUpload}
+                          >
+                            Cancel Upload
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-xs leading-relaxed text-slate-500">
+                        Upload a CSV first, then decide whether to continue to training or cancel the temporary upload.
+                      </p>
+                    )}
                   </div>
                 </div>
 

@@ -423,14 +423,15 @@ def roi_calculate(params: ROIParams):
                 avg_arpu=params.avg_arpu,
                 retention_cost=params.retention_cost,
                 success_rate=params.success_rate,
+                avg_clv=params.avg_clv,
             )
             return roi_calc.calculate()
         else:
             churning = round(params.total_customers * params.churn_rate)
-            revenue_at_risk = churning * params.avg_arpu * 12
+            revenue_at_risk = churning * params.avg_clv
             total_cost = churning * params.retention_cost
             saved = round(churning * params.success_rate)
-            recovered = saved * params.avg_arpu * 12
+            recovered = saved * params.avg_clv
             clv_saved = saved * params.avg_clv
             net_roi = recovered - total_cost
             roi_pct = (net_roi / total_cost * 100) if total_cost > 0 else 0

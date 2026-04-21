@@ -9,9 +9,12 @@ import { Badge, Button, Card, ProgressBar, SectionHeader } from '../components/u
 import { trainModel } from '../lib/api';
 import { updateStats } from '../lib/analytics';
 import {
+  clearCustomDatasetSession,
   getCustomDatasetSession,
   getDefaultWorkspaceContext,
+  getTrainingSession,
   getWorkspaceContext,
+  saveTrainingSession,
   saveCustomDatasetSession,
   setSelectedTrainingModel,
 } from '../lib/workspace';
@@ -65,6 +68,10 @@ export default function TrainPage() {
       setSessionDataset(stored);
       setTrainFile({ name: stored.name, size: stored.size });
     }
+    const trainingSession = getTrainingSession();
+    if (trainingSession?.result) {
+      setTrainResult(trainingSession.result);
+    }
     setWorkspaceContext(getWorkspaceContext());
   }, []);
 
@@ -108,6 +115,13 @@ export default function TrainPage() {
         filename: sessionDataset?.name || null,
       });
       setTrainResult(result);
+      saveTrainingSession({
+        algorithm,
+        testSize,
+        result,
+        sessionModel: result.session_model || null,
+        datasetName: sessionDataset?.name || null,
+      });
       updateStats({ totalTrainingSessions: 1 });
       setWorkspaceContext(
         setSelectedTrainingModel({
@@ -218,7 +232,13 @@ export default function TrainPage() {
             </div>
             {trainFile && (
               <button
-                onClick={() => setTrainFile(null)}
+                onClick={() => {
+                  setTrainFile(null);
+                  setSessionDataset(null);
+                  setTrainResult(null);
+                  clearCustomDatasetSession();
+                  setWorkspaceContext(getWorkspaceContext());
+                }}
                 type="button"
                 className="mt-2 text-xs text-slate-500 hover:text-slate-300"
               >
