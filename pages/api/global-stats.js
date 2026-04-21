@@ -1,6 +1,7 @@
 import { getRedisConfig, normaliseRedisHash, runRedisBatch, runRedisCommand } from '../../lib/redis';
 
-const STATS_KEY = 'churniq:global_stats';
+const STATS_KEY = 'churniq:global_stats:v2';
+const LEGACY_STATS_KEYS = ['churniq:global_stats'];
 
 const defaultStats = {
   totalPredictions: 0,
@@ -26,6 +27,7 @@ function buildStorageMeta() {
     configured: config.configured,
     provider: config.provider,
     key: STATS_KEY,
+    legacyKeys: LEGACY_STATS_KEYS,
   };
 }
 
@@ -55,24 +57,110 @@ function normaliseStoredStats(hash) {
   return normalized;
 }
 
+function normaliseSerializedStats(value) {
+  if (!value) return null;
+
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+
+  if (typeof value === 'object') return value;
+  return null;
+}
+
+function hasTrackedStats(stats = {}) {
+  return NUMERIC_FIELDS.some((field) => Number(stats[field]) > 0) || Boolean(stats.createdAt || stats.lastUpdated);
+}
+
+function buildHashFields(stats = {}, { createdAt = null, lastUpdated = null } = {}) {
+  const payload = [];
+
+  for (const field of NUMERIC_FIELDS) {
+    const safeValue = toSafeInteger(Number(stats[field]));
+    payload.push(field, String(safeValue ?? 0));
+  }
+
+  const resolvedCreatedAt = stats.createdAt || createdAt;
+  const resolvedLastUpdated = stats.lastUpdated || lastUpdated;
+
+  if (resolvedCreatedAt) payload.push('createdAt', resolvedCreatedAt);
+  if (resolvedLastUpdated) payload.push('lastUpdated', resolvedLastUpdated);
+
+  return payload;
+}
+
+async function readStatsFromKey(key) {
+  const keyType = await runRedisCommand('TYPE', [key], { readOnly: true });
+
+  if (!keyType || keyType === 'none') return null;
+
+  if (keyType === 'hash') {
+    const stored = await runRedisCommand('HGETALL', [key], { readOnly: true });
+    return {
+      key,
+      type: keyType,
+      stats: normaliseStoredStats(stored),
+    };
+  }
+
+  if (keyType === 'string') {
+    const stored = await runRedisCommand('GET', [key], { readOnly: true });
+    const parsed = normaliseSerializedStats(stored);
+
+    if (!parsed) {
+      throw new Error(`Stats key "${key}" is a string but does not contain valid JSON.`);
+    }
+
+    return {
+      key,
+      type: keyType,
+      stats: normaliseStoredStats(parsed),
+    };
+  }
+
+  throw new Error(`Stats key "${key}" has unsupported Redis type "${keyType}".`);
+}
+
 async function getStats() {
-  const stored = await runRedisCommand('HGETALL', [STATS_KEY], { readOnly: true });
-  return normaliseStoredStats(stored);
+  const keysToTry = [STATS_KEY, ...LEGACY_STATS_KEYS];
+
+  for (const key of keysToTry) {
+    const record = await readStatsFromKey(key);
+    if (record) return record;
+  }
+
+  return {
+    key: STATS_KEY,
+    type: 'none',
+    stats: normaliseStoredStats(null),
+  };
 }
 
 async function incrementStats(increments = {}) {
-  const current = await getStats();
+  const currentRecord = await getStats();
+  const current = currentRecord.stats;
   const now = new Date().toISOString();
   const createdAt = current.createdAt || now;
+  const commands = [];
 
-  const commands = Object.entries(increments)
+  if (currentRecord.key !== STATS_KEY && hasTrackedStats(current)) {
+    commands.push(['HSET', STATS_KEY, ...buildHashFields(current, { createdAt, lastUpdated: current.lastUpdated || now })]);
+  }
+
+  commands.push(
+    ...Object.entries(increments)
     .map(([field, value]) => {
       const safeValue = toSafeInteger(value);
       if (!NUMERIC_FIELDS.includes(field) || safeValue === null || safeValue === 0) return null;
 
       return ['HINCRBY', STATS_KEY, field, String(safeValue)];
     })
-    .filter(Boolean);
+    .filter(Boolean)
+  );
 
   commands.push(['HSET', STATS_KEY, 'createdAt', createdAt, 'lastUpdated', now]);
 
@@ -102,8 +190,12 @@ export default async function handler(req, res) {
     try {
       const stats = await getStats();
       return res.status(200).json({
-        ...stats,
-        _storage: storage,
+        ...stats.stats,
+        _storage: {
+          ...storage,
+          sourceKey: stats.key,
+          sourceType: stats.type,
+        },
       });
     } catch (error) {
       console.error('Global stats read error:', error);
