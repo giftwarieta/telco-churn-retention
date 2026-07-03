@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useDropzone } from 'react-dropzone';
 import toast from 'react-hot-toast';
-import { CheckCircle, Cpu, Info, Play, Server, Upload } from 'lucide-react';
+import { CheckCircle, Cpu, Info, Play, Server, Upload, ArrowDownToLine, Table } from 'lucide-react';
 import Layout from '../components/Layout';
 import { useDataSource } from '../components/DataOnboarding';
 import { Badge, Button, Card, ProgressBar, SectionHeader } from '../components/ui';
@@ -24,6 +24,16 @@ const ALGORITHMS = [
   { id: 'random_forest', label: 'Random Forest', badge: null, color: 'purple', desc: 'Reliable ensemble baseline with stable results.' },
   { id: 'logistic', label: 'Logistic Regression', badge: 'Baseline', color: 'slate', desc: 'Fast and interpretable baseline model.' },
   { id: 'lightgbm', label: 'LightGBM', badge: 'Fast', color: 'emerald', desc: 'Efficient boosting for larger datasets.' },
+];
+
+const TEMPLATE_HEADERS = [
+  { name: 'customerID', type: 'String', sample: '7590-VHVEG' },
+  { name: 'tenure', type: 'Integer', sample: '12' },
+  { name: 'MonthlyCharges', type: 'Float', sample: '70.35' },
+  { name: 'TotalCharges', type: 'Float', sample: '844.20' },
+  { name: 'Contract', type: 'String', sample: 'Month-to-month' },
+  { name: 'InternetService', type: 'String', sample: 'Fiber optic' },
+  { name: 'Churn', type: 'Binary (0/1)', sample: '1' },
 ];
 
 export default function TrainPage() {
@@ -78,6 +88,31 @@ export default function TrainPage() {
   if (dataSource === null || dataSource === 'default') {
     return null;
   }
+
+  // Generates and triggers browser download pipeline for template mapping references
+  const handleDownloadTemplate = () => {
+    try {
+      const csvHeaders = TEMPLATE_HEADERS.map(h => h.name).join(',');
+      const csvRow = TEMPLATE_HEADERS.map(h => h.sample).join(',');
+      const csvContent = `data:text/csv;charset=utf-8,${csvHeaders}\n${csvRow}`;
+      
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement('a');
+      link.setAttribute('href', encodedUri);
+      link.setAttribute('download', 'churniq_custom_template.csv');
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.custom((t) => (
+        <div className="bg-slate-900 border border-sky-500/20 px-4 py-3 rounded-xl flex items-center gap-2.5 text-xs font-medium text-white shadow-xl">
+          <ArrowDownToLine className="h-4 w-4 text-sky-400" />
+          <span>Template dataset schema downloaded successfully!</span>
+        </div>
+      ));
+    } catch {
+      toast.error('Failed to parse downloadable template schema file');
+    }
+  };
 
   const handleTrain = async () => {
     setLoading(true);
@@ -151,7 +186,7 @@ export default function TrainPage() {
 
       <div className="grid gap-6 lg:grid-cols-5">
         <div className="space-y-5 lg:col-span-2">
-          <Card className="border-purple-500/20 bg-purple-500/6 p-5">
+          <Card className="border-purple-500/20 bg-purple-500/5 p-5">
             <div className="mb-2 flex items-center justify-between gap-3">
               <h3 className="font-display text-sm font-semibold text-white">Session Dataset</h3>
               <Badge color="purple">Session only</Badge>
@@ -161,6 +196,48 @@ export default function TrainPage() {
                 ? `${sessionDataset.name} is loaded for this browser session only. It is not permanently saved and will be cleared when the session expires or when you change data route.`
                 : 'Upload a CSV for this browser session. Session uploads are not permanently saved and will be cleared when the session expires or when you change data route.'}
             </p>
+          </Card>
+
+          {/* New Dynamic Download Schema Template Matrix Block */}
+          <Card className="p-5 border-slate-800 bg-slate-900/10 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-sky-500/5 rounded-full blur-2xl pointer-events-none" />
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="rounded-xl bg-sky-500/10 p-2 text-sky-400 border border-sky-500/10">
+                  <Table className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="font-display text-xs font-bold text-white">Expected Schema Template</h3>
+                  <p className="text-[10px] text-slate-500">Ensure your headers align for clean model parsers.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleDownloadTemplate}
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-sky-500/20 bg-sky-500/5 text-[11px] font-bold text-sky-400 transition-colors hover:bg-sky-500 hover:text-white"
+              >
+                <ArrowDownToLine className="h-3.5 w-3.5" />
+                <span>CSV Template</span>
+              </button>
+            </div>
+
+            {/* Layout mini preview grid table tracking required options */}
+            <div className="overflow-hidden rounded-xl border border-white/5 bg-black/20 text-[11px]">
+              <div className="grid grid-cols-3 bg-white/5 px-3 py-2 text-slate-400 font-mono uppercase tracking-wider text-[9px]">
+                <div>Column Name</div>
+                <div>Data Type</div>
+                <div className="text-right">Sample Case</div>
+              </div>
+              <div className="divide-y divide-white/5 max-h-[160px] overflow-y-auto custom-scrollbar">
+                {TEMPLATE_HEADERS.map((header) => (
+                  <div key={header.name} className="grid grid-cols-3 px-3 py-1.5 text-slate-300 font-mono items-center">
+                    <div className="text-white truncate pr-1 font-bold">{header.name}</div>
+                    <div className="text-slate-500 text-[10px]">{header.type}</div>
+                    <div className="text-right text-sky-400/80 truncate">{header.sample}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </Card>
 
           <Card className="p-5">
@@ -174,11 +251,11 @@ export default function TrainPage() {
                   className={`w-full rounded-2xl border p-4 text-left transition-all duration-200 ${
                     algorithm === algo.id
                       ? 'border-sky-500/30 bg-sky-500/10'
-                      : 'border-[color:var(--border)] hover:border-slate-500/30 hover:bg-white/3'
+                      : 'border-[color:var(--border)] hover:border-slate-700/60 hover:bg-white/3'
                   }`}
                 >
                   <div className="mb-1 flex items-center justify-between gap-3">
-                    <span className={`text-sm font-medium ${algorithm === algo.id ? 'text-sky-500' : 'text-slate-300'}`}>
+                    <span className={`text-sm font-medium ${algorithm === algo.id ? 'text-sky-400 font-bold' : 'text-slate-300'}`}>
                       {algo.label}
                     </span>
                     {algo.badge && <Badge color={algo.color === 'slate' ? 'slate' : algo.color}>{algo.badge}</Badge>}
@@ -223,7 +300,7 @@ export default function TrainPage() {
               <Upload className="mx-auto mb-2 h-6 w-6 text-slate-600" />
               {trainFile ? (
                 <div>
-                  <p className="text-sm text-emerald-500">{trainFile.name}</p>
+                  <p className="text-sm text-emerald-500 font-bold">{trainFile.name}</p>
                   {trainFile.size ? <p className="mt-1 text-[11px] text-slate-500">{(trainFile.size / 1024).toFixed(1)} KB</p> : null}
                 </div>
               ) : (
@@ -236,18 +313,19 @@ export default function TrainPage() {
                   setTrainFile(null);
                   setSessionDataset(null);
                   setTrainResult(null);
+                  setTrainError(null);
                   clearCustomDatasetSession();
                   setWorkspaceContext(getWorkspaceContext());
                 }}
                 type="button"
-                className="mt-2 text-xs text-slate-500 hover:text-slate-300"
+                className="mt-2 text-xs text-slate-500 hover:text-slate-300 underline decoration-dotted underline-offset-2"
               >
                 Clear selected file
               </button>
             )}
           </Card>
 
-          <Button icon={Play} onClick={handleTrain} loading={loading} size="lg" className="w-full">
+          <Button icon={Play} onClick={handleTrain} loading={loading} size="lg" className="w-full shadow-lg shadow-sky-500/5">
             {loading ? phase || 'Training...' : 'Confirm Model and Start Training'}
           </Button>
         </div>

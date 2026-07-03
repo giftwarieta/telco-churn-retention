@@ -164,23 +164,18 @@ function buildSimpleChatFallback(content) {
   if (/^(thanks|thank you|thankyou|thx|great|perfect|okay|ok|got it)[.!? ]*$/i.test(normalized)) {
     return 'You are very welcome. Are there any other specific areas or further assistance you require at this time?';
   }
-
   if (/^(hi|hello|hey)[.!? ]*$/i.test(normalized)) {
     return 'Hello. I can help with churn strategy, retention offers, ROI, pricing, customer value management, explainability, and questions about the active data.';
   }
-
   if (/^(no|nope|that\'s all|that is all|nothing else|all good|all set|no thanks|no thank you)[.!? ]*$/i.test(normalized)) {
     return 'It was a pleasure assisting you today. Wishing you continued success in your customer retention efforts. Goodbye!';
   }
-
   if (/^(bye|goodbye|exit|quit|see you)[.!? ]*$/i.test(normalized)) {
     return 'Goodbye. Feel free to reach out anytime for further assistance with your churn strategies.';
   }
-
   if (/\broi|payback|arpu|clv|revenue|cost\b/i.test(normalized)) {
     return 'To provide an accurate ROI calculation, I require at least the target customer count, expected save rate, campaign cost, and average monthly value or ARPU.';
   }
-
   return FRIENDLY_SERVICE_MESSAGE;
 }
 
@@ -225,12 +220,10 @@ function extractBalancedChatJson(text = '', startIndex = 0) {
       inString = true;
       continue;
     }
-
     if (char === '{') {
       depth += 1;
       continue;
     }
-
     if (char === '}') {
       depth -= 1;
       if (depth === 0) {
@@ -241,7 +234,6 @@ function extractBalancedChatJson(text = '', startIndex = 0) {
       }
     }
   }
-
   return null;
 }
 
@@ -261,7 +253,6 @@ function buildVisualFallbackText(visuals = []) {
   if (primaryType === 'bar' || primaryType === 'column' || primaryType === 'line') {
     return 'Here is a simple chart summary based on the active data.';
   }
-
   return 'Here is a simple summary based on the active data.';
 }
 
@@ -320,7 +311,6 @@ function extractStructuredAssistantEnvelope(rawReply = '') {
       continue;
     }
   }
-
   return null;
 }
 
@@ -767,11 +757,9 @@ export default function ConsultantPage() {
 
   const profileReady = Boolean(consultantProfileState.userName && consultantProfileState.companyName);
 
-  // --- NEW: Smart Body Scrolling Lock ---
-  // Locks the body scroll ONLY on mobile/tablet view. Desktop users can still scroll normally.
+  // Smart Mobile/Tablet Body Scrolling Lock
   useEffect(() => {
     const handleResize = () => {
-      // lg breakpoint in tailwind is 1024px. Below this, we assume mobile/tablet app-like view
       if (window.innerWidth < 1024) {
         document.body.classList.add('overflow-hidden');
         document.documentElement.classList.add('overflow-hidden');
@@ -781,7 +769,7 @@ export default function ConsultantPage() {
       }
     };
 
-    handleResize(); // Run immediately on mount
+    handleResize();
     window.addEventListener('resize', handleResize);
 
     return () => {
@@ -796,7 +784,9 @@ export default function ConsultantPage() {
   }, [messages, loading]);
 
   useEffect(() => {
-    setConsultantHistory(messages);
+    if (messages.length > 0) {
+      setConsultantHistory(messages);
+    }
   }, [messages]);
 
   useEffect(() => {
@@ -805,15 +795,45 @@ export default function ConsultantPage() {
     const loadContext = async () => {
       const workspace = getWorkspaceContext();
       const storedProfile = getConsultantProfile();
-      const storedHistory = getConsultantHistory();
+      
+      const contextSignature = `${workspace.dataSource || 'default'}-${workspace.datasetName || 'built-in'}`;
+      
+      let verifiedHistory = [];
+      let finalProfile = storedProfile;
+
+      try {
+        const localMetaString = localStorage.getItem('churniq_consultant_history_meta');
+        if (localMetaString) {
+          const meta = JSON.parse(localMetaString);
+          const oneDayMs = 24 * 60 * 60 * 1000;
+          const isExpired = Date.now() - (meta.timestamp || 0) > oneDayMs;
+          const isContextMatch = meta.contextKey === contextSignature;
+
+          if (isContextMatch && !isExpired) {
+            verifiedHistory = getConsultantHistory();
+          } else {
+            // Context switch or 1-day limit hit: clean house completely (history AND profile metadata)
+            clearConsultantHistory();
+            clearConsultantProfile();
+            localStorage.removeItem('churniq_consultant_history_meta');
+            finalProfile = { userName: '', companyName: '', updatedAt: null };
+          }
+        }
+      } catch (e) {
+        console.error('Context clear evaluation skipped:', e);
+      }
 
       if (!active) return;
       setWorkspaceContext(workspace);
-      setConsultantProfileState(storedProfile);
-      setProfileDraft(storedProfile);
-      if (storedHistory.length > 0) {
-        setMessages(storedHistory.map(normalizeConsultantMessage));
+      setConsultantProfileState(finalProfile);
+      setProfileDraft(finalProfile);
+      
+      if (verifiedHistory.length > 0) {
+        setMessages(verifiedHistory.map(normalizeConsultantMessage));
+      } else {
+        setMessages([]);
       }
+      
       setDataSummaryLoading(true);
 
       try {
@@ -834,7 +854,6 @@ export default function ConsultantPage() {
 
         if (!active) return;
         setDataSummary(summary);
-
       } catch {
         if (active) setDataSummary(null);
       } finally {
@@ -861,9 +880,11 @@ export default function ConsultantPage() {
     }
 
     const saved = setConsultantProfile(nextProfile);
-
     setConsultantProfileState(saved);
     setProfileDraft(saved);
+    
+    clearConsultantHistory();
+    localStorage.removeItem('churniq_consultant_history_meta');
     setMessages([]);
     toast.success('Consultant workspace is ready');
   };
@@ -882,6 +903,19 @@ export default function ConsultantPage() {
     const nextMessages = [...messages, userMessage];
     setMessages(nextMessages);
     setLoading(true);
+
+    try {
+      const contextSignature = `${workspaceContext.dataSource || 'default'}-${workspaceContext.datasetName || 'built-in'}`;
+      const hasMeta = localStorage.getItem('churniq_consultant_history_meta');
+      if (!hasMeta) {
+        localStorage.setItem(
+          'churniq_consultant_history_meta',
+          JSON.stringify({ contextKey: contextSignature, timestamp: Date.now() })
+        );
+      }
+    } catch (e) {
+      // Storage fallback lock
+    }
 
     try {
       const context = buildUserDataContext(consultantProfileState, dataSummary);
@@ -928,13 +962,22 @@ export default function ConsultantPage() {
   };
 
   const handleClearChat = () => {
+    // Completely wipe everything when user explicitly clears chat history
     clearConsultantHistory();
+    clearConsultantProfile();
+    localStorage.removeItem('churniq_consultant_history_meta');
+    
     setMessages([]);
+    setConsultantProfileState({ userName: '', companyName: '', updatedAt: null });
+    setProfileDraft({ userName: '', companyName: '', updatedAt: null });
+    
+    toast.success('Chat history and personalization cleared');
   };
 
   const handleEndSession = () => {
     clearConsultantHistory();
     clearConsultantProfile();
+    localStorage.removeItem('churniq_consultant_history_meta');
     setMessages([]);
     setInput('');
     setConsultantProfileState({ userName: '', companyName: '', updatedAt: null });
@@ -1023,9 +1066,7 @@ export default function ConsultantPage() {
           </Card>
         </div>
 
-        {/* --- FIXED MOBILE HEIGHT (100svh-11rem) & MIN-H-0 --- */}
         <Card className="order-1 mx-auto flex h-[calc(100svh-11rem)] min-h-0 w-full max-w-4xl flex-col overflow-hidden p-0 sm:h-[calc(100svh-5.75rem)] lg:order-2 lg:h-[calc(100svh-3rem)]">
-          
           <div className="z-10 shrink-0 border-b border-[color:var(--border)] bg-[color:var(--bg-card)] px-3 py-3 sm:px-5 sm:py-4">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
@@ -1046,7 +1087,7 @@ export default function ConsultantPage() {
                 <div className="flex items-center gap-1.5 sm:gap-2">
                   {messages.length > 0 && (
                     <Button icon={Trash2} variant="ghost" size="sm" onClick={handleClearChat} className="px-2.5 sm:px-3">
-                      <span className="hidden sm:inline">Clear</span>
+                      <span className="hidden sm:inline">Clear All</span>
                     </Button>
                   )}
                   <Button icon={LogOut} variant="ghost" size="sm" onClick={handleEndSession} className="px-2.5 sm:px-3">
