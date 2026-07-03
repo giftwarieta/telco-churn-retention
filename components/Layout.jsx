@@ -19,10 +19,16 @@ import {
   UserCircle,
   Wrench,
   X,
+  Database,
+  FileUp,
+  Sparkles,
+  Lock,
 } from 'lucide-react';
 import { trackPageView } from '../lib/analytics';
-import { DataSourceChip, useDataSource } from './DataOnboarding';
+import { DataSourceChip, STORAGE_KEY, resetDataSourceSelection, useDataSource } from './DataOnboarding';
 import { getApiBaseUrl, getApiMode } from '../lib/api';
+import { setDefaultWorkspaceModel, getWorkspaceContext } from '../lib/workspace';
+import toast from 'react-hot-toast';
 
 const allNavItems = [
   { href: '/', label: 'Overview', icon: LayoutDashboard },
@@ -62,12 +68,17 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
   const [theme, setTheme] = useState('dark');
   const [apiStatus, setApiStatus] = useState('checking');
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  
+  // Hydration and dynamic pipeline state
+  const [hasMounted, setHasMounted] = useState(false);
+  const [isModelTrained, setIsModelTrained] = useState(true);
 
   useEffect(() => {
     trackPageView(router.pathname);
   }, [router.pathname]);
 
   useEffect(() => {
+    setHasMounted(true);
     const storedTheme = typeof window !== 'undefined' ? window.localStorage.getItem('churniq-theme') : null;
     const preferredTheme = typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: light)').matches
       ? 'light'
@@ -79,7 +90,6 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
 
   useEffect(() => {
     const mode = getApiMode();
-
     if (mode === 'unconfigured') {
       setApiStatus('setup');
       return undefined;
@@ -120,6 +130,34 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
     };
   }, []);
 
+  // INSTANT WORKSPACE & TRAINING RE-EVALUATION LOOP
+  useEffect(() => {
+    if (!hasMounted) return;
+
+    const checkTrainingStatus = () => {
+      const currentSource = localStorage.getItem(STORAGE_KEY) || dataSource;
+      if (currentSource === 'custom') {
+        try {
+          const session = JSON.parse(localStorage.getItem('churniq_training_session') || '{}');
+          setIsModelTrained(Boolean(session?.sessionModel?.artifact));
+        } catch {
+          setIsModelTrained(false);
+        }
+      } else {
+        setIsModelTrained(true);
+      }
+    };
+
+    checkTrainingStatus();
+    window.addEventListener('storage', checkTrainingStatus);
+    const checkInterval = setInterval(checkTrainingStatus, 400);
+
+    return () => {
+      window.removeEventListener('storage', checkTrainingStatus);
+      clearInterval(checkInterval);
+    };
+  }, [dataSource, router.pathname, hasMounted]);
+
   useEffect(() => {
     setMoreMenuOpen(false);
   }, [router.pathname]);
@@ -144,16 +182,59 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
     window.localStorage.setItem('churniq-theme', nextTheme);
   };
 
+  // DIRECT DEEP-LINK ADDRESS BAR INTERCEPT LOCKOUT EVALUATION
+  const isCurrentPageSuspended = useMemo(() => {
+    if (!hasMounted) return false;
+    const currentSource = localStorage.getItem(STORAGE_KEY) || dataSource;
+    
+    // GATING SAFETY: Completely open up navigation layers if using default dataset pathway
+    if (currentSource !== 'custom' || isModelTrained) return false;
+
+    const allowedOpenRoutes = ['/', '/about', '/train'];
+    return !allowedOpenRoutes.includes(router.pathname);
+  }, [dataSource, isModelTrained, router.pathname, hasMounted]);
+
+  // Handle modal pathway recovery options
+  const handleModalPathChange = async (targetPath) => {
+    if (targetPath === 'default') {
+      try {
+        localStorage.setItem(STORAGE_KEY, 'default');
+      } catch {}
+      setDefaultWorkspaceModel();
+      setIsModelTrained(true);
+      toast.success('Switched back to default expert pipeline');
+      await router.replace('/');
+    } else if (targetPath === 'custom') {
+      resetDataSourceSelection();
+      try {
+        localStorage.setItem(STORAGE_KEY, 'custom');
+      } catch {}
+      window.dispatchEvent(new Event('storage'));
+      await router.push('/train');
+    }
+  };
+
+  // Dynamically filter matching active nav items
   const navItems = useMemo(() => {
-    if (dataSource === 'custom') {
-      return [
-        ...allNavItems.slice(0, 5),
-        { href: '/train', label: 'Train', icon: Wrench },
-        ...allNavItems.slice(5),
+    let baseList = [...allNavItems];
+    if (!hasMounted) return baseList;
+
+    const currentSource = localStorage.getItem(STORAGE_KEY) || dataSource;
+    if (currentSource === 'custom') {
+      baseList = [
+        ...baseList.slice(0, 5),
+        { href: '/train', label: 'Train Model', icon: Wrench },
+        ...baseList.slice(5),
       ];
     }
-    return allNavItems;
-  }, [dataSource]);
+
+    if (currentSource === 'custom' && !isModelTrained) {
+      return baseList.filter(item => ['/', '/about', '/train'].includes(item.href));
+    }
+
+    return baseList;
+  }, [dataSource, isModelTrained, hasMounted]);
+
   const mobilePrimaryNav = navItems.slice(0, 3);
   const mobileMoreNav = navItems.slice(3);
   const moreActive = mobileMoreNav.some((item) => item.href === router.pathname);
@@ -173,6 +254,59 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
           <div className="floating-orb floating-orb-b" />
           <div className="floating-orb floating-orb-c" />
         </div>
+
+        {/* --- DYNAMIC PIPELINE LOCKOUT GATING INTERCEPT SYSTEM --- */}
+        {hasMounted && isCurrentPageSuspended && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in">
+            <div className="w-full max-w-xl overflow-hidden rounded-[32px] border border-slate-800/80 bg-[#090E17] p-6 sm:p-10 shadow-2xl relative text-center">
+              <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl pointer-events-none" />
+
+              <div className="relative z-10 flex flex-col items-center mb-8">
+                <div className="rounded-2xl bg-gradient-to-b from-purple-500/20 to-purple-500/5 p-3 border border-purple-500/20 shadow-inner mb-4">
+                  <Lock className="h-6 w-6 text-purple-400 animate-pulse" />
+                </div>
+                <h2 className="font-display text-2xl font-extrabold text-white tracking-tight">
+                  Custom Model Yet to be Trained
+                </h2>
+                <p className="mt-3 text-sm text-slate-400 leading-relaxed max-w-md">
+                  You are working inside a custom dataset session workspace, but your predictive intelligence pipeline model has not been generated yet.
+                </p>
+                <p className="mt-2 text-xs text-slate-500 leading-relaxed max-w-sm">
+                  To open up advanced features, please proceed to train your uploaded data or fall back seamlessly to the standard built-in path.
+                </p>
+              </div>
+
+              {/* Recovery Path Controls */}
+              <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 gap-4 mt-8 pt-6 border-t border-white/5">
+                {/* Pathway A: Run Training */}
+                <button
+                  type="button"
+                  onClick={() => handleModalPathChange('custom')}
+                  className="flex flex-col items-center justify-between p-4 rounded-2xl border border-purple-500/20 bg-purple-500/5 hover:bg-purple-500/10 hover:border-purple-500/40 text-center transition-all duration-300 transform active:scale-[0.98] group"
+                >
+                  <div className="rounded-xl bg-purple-500/10 p-2.5 text-purple-400 mb-2">
+                    <Wrench className="h-4 w-4" />
+                  </div>
+                  <span className="text-xs font-bold text-white mb-1">Proceed to Training</span>
+                  <span className="text-[10px] text-slate-500 leading-snug">Configure your uploaded CSV schema metrics.</span>
+                </button>
+
+                {/* Pathway B: Default Fallback */}
+                <button
+                  type="button"
+                  onClick={() => handleModalPathChange('default')}
+                  className="flex flex-col items-center justify-between p-4 rounded-2xl border border-sky-500/20 bg-sky-500/5 hover:bg-sky-500/10 hover:border-sky-500/40 text-center transition-all duration-300 transform active:scale-[0.98] group"
+                >
+                  <div className="rounded-xl bg-sky-500/10 p-2.5 text-sky-400 mb-2">
+                    <Database className="h-4 w-4" />
+                  </div>
+                  <span className="text-xs font-bold text-white mb-1">Use Default Pathway</span>
+                  <span className="text-[10px] text-slate-500 leading-snug">Unlock panels right now using pre-trained IBM Telco models.</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {moreMenuOpen && (
           <div className="app-overlay fixed inset-0 z-40 lg:hidden" onClick={() => setMoreMenuOpen(false)} />
@@ -264,8 +398,9 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
           </footer>
         </div>
 
+        {/* Mobile View Bottom Navigation Menus */}
         <nav className="bottom-nav lg:hidden">
-          <div className="grid grid-cols-4 gap-2 px-3 py-3">
+          <div className={`grid ${navItems.length <= 4 ? 'grid-cols-3' : 'grid-cols-4'} gap-2 px-3 py-3`}>
             {mobilePrimaryNav.map((item) => {
               const Icon = item.icon;
               const isActive = router.pathname === item.href;
@@ -282,20 +417,22 @@ export default function Layout({ children, title = 'ChurnIQ' }) {
               );
             })}
 
-            <button
-              type="button"
-              onClick={() => setMoreMenuOpen(true)}
-              className={`bottom-nav-item bottom-nav-item-grid ${moreActive || moreMenuOpen ? 'bottom-nav-item-active' : ''}`}
-              aria-label="Open more navigation items"
-              aria-expanded={moreMenuOpen}
-            >
-              <MoreHorizontal className="h-4 w-4" />
-              <span>More</span>
-            </button>
+            {mobileMoreNav.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setMoreMenuOpen(true)}
+                className={`bottom-nav-item bottom-nav-item-grid ${moreActive || moreMenuOpen ? 'bottom-nav-item-active' : ''}`}
+                aria-label="Open more navigation items"
+                aria-expanded={moreMenuOpen}
+              >
+                <MoreHorizontal className="h-4 w-4" />
+                <span>More</span>
+              </button>
+            )}
           </div>
         </nav>
 
-        {moreMenuOpen && (
+        {moreMenuOpen && mobileMoreNav.length > 0 && (
           <div className="mobile-more-modal lg:hidden" role="dialog" aria-modal="true" aria-label="More navigation items">
             <div className="mobile-more-card">
               <div className="mb-4 flex items-center justify-between gap-3">

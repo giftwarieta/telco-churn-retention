@@ -2,7 +2,7 @@ import Head from 'next/head';
 import { useEffect, useState } from 'react';
 import { Globe, Youtube, Twitter, Linkedin, Brain, Code2, Database, Server, Cpu, Layers, ExternalLink, User } from 'lucide-react';
 import Layout from '../components/Layout';
-import { Card, SectionHeader, Badge, Button } from '../components/ui';
+import { Card, SectionHeader, Button } from '../components/ui';
 
 const SKILLS = [
   { icon: Brain, label: 'Machine Learning & XAI', color: 'text-cyan-400', bg: 'bg-cyan-500/10 border-cyan-500/20' },
@@ -29,13 +29,13 @@ const PROJECTS = [
   },
   {
     name: 'Certizent',
-    description: 'Certificate validation platform for verifying academic and professional credentials.',
+    description: 'Certificate validation platform for verifying academic and professional credentials using unique digital fingerprints.',
     href: 'https://certizent.com',
     accent: 'amber',
   },
   {
     name: 'ChurnIQ',
-    description: 'Explainable AI-powered telecom churn prediction and retention strategy dashboard.',
+    description: 'Explainable AI-powered telecom churn prediction and retention strategy dashboard built with machine learning interpretability.',
     accent: 'emerald',
   },
 ];
@@ -51,104 +51,103 @@ export default function AboutPage() {
         <meta name="description" content="Warieta Gift Ejovwoke — AI and Data Intelligence Leader, builder of intelligent systems." />
       </Head>
 
-      <SectionHeader
-        title="About the Project & Developer"
-        subtitle="Learn more about the intent behind ChurnIQ and the engineering ecosystem powering it."
-        icon={User}
-      />
+      {/* Header Entrance */}
+      <div className={`transition-all duration-700 ease-out transform ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
+        <SectionHeader
+          title="About the Project & Developer"
+          subtitle="Learn more about the intent behind ChurnIQ and the engineering ecosystem powering it."
+          icon={User}
+        />
+      </div>
 
       <div className="space-y-6">
-        {/* Redesigned Profile & Project Split Card */}
-        <Card className="p-6 sm:p-8 bg-[color:var(--bg-card)] border border-[color:var(--border)] overflow-hidden relative">
-          {/* Subtle decorative background glow */}
-          <div className="absolute top-0 right-0 w-64 h-64 bg-sky-500/5 rounded-full blur-3xl pointer-events-none" />
+        {/* Profile Split Card with dynamic zoom and fade effects */}
+        <div className={`transition-all duration-700 ease-out transform delay-100 ${mounted ? 'opacity-100 scale-100' : 'opacity-0 scale-[0.98]'}`}>
+          <Card className="p-6 sm:p-8 bg-[color:var(--bg-card)] border border-[color:var(--border)] overflow-hidden relative transition-all duration-300 hover:border-slate-700/60 shadow-lg">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-sky-500/5 rounded-full blur-3xl pointer-events-none" />
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 relative z-10">
-            
-            {/* Left Side: Developer Identity (5-Columns wide on desktop) */}
-            <div className="lg:col-span-5 flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-left gap-5 lg:border-r lg:border-[color:var(--border)] lg:pr-6">
-              {/* Animated Avatar Box */}
-              <div className={`flex-shrink-0 transition-all duration-700 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
-                <div className="relative inline-block">
-                  <div className="absolute -inset-1 rounded-full bg-gradient-to-tr from-sky-500 via-cyan-400 to-emerald-400 opacity-60 blur-sm" />
-                  <img
-                    src="https://raw.githubusercontent.com/giftwarieta/Python/main/assets/mydp.png"
-                    alt="Warieta Gift Ejovwoke"
-                    className="relative h-20 w-20 rounded-full border-2 border-[color:var(--border)] object-cover bg-slate-900"
-                    onError={(e) => {
-                      e.target.style.display = 'none';
-                      e.target.parentElement.querySelector('.avatar-fallback').style.display = 'flex';
-                    }}
-                  />
-                  <div className="avatar-fallback relative hidden h-20 w-20 items-center justify-center rounded-full border-2 border-[color:var(--border)] bg-gradient-to-br from-sky-600 to-cyan-500 text-xl font-bold text-white">
-                    WG
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 relative z-10">
+              
+              {/* Left Side: Developer Identity */}
+              <div className="lg:col-span-5 flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-left gap-5 lg:border-r lg:border-[color:var(--border)] lg:pr-6">
+                <div className="flex-shrink-0">
+                  <div className="relative inline-block group">
+                    <div className="absolute -inset-1 rounded-full bg-gradient-to-tr from-sky-500 via-cyan-400 to-emerald-400 opacity-60 blur-sm group-hover:opacity-100 transition-opacity duration-500" />
+                    <img
+                      src="https://raw.githubusercontent.com/giftwarieta/Python/main/assets/mydp.png"
+                      alt="Warieta Gift Ejovwoke"
+                      className="relative h-20 w-20 rounded-full border-2 border-[color:var(--border)] object-cover bg-slate-900 transform transition-transform duration-500 group-hover:scale-105"
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                        e.target.parentElement.querySelector('.avatar-fallback').style.display = 'flex';
+                      }}
+                    />
+                    <div className="avatar-fallback relative hidden h-20 w-20 items-center justify-center rounded-full border-2 border-[color:var(--border)] bg-gradient-to-br from-sky-600 to-cyan-500 text-xl font-bold text-white">
+                      WG
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex-1">
+                  <h2 className="font-display text-xl font-bold text-white tracking-tight">
+                    Warieta Gift Ejovwoke
+                  </h2>
+                  <p className="mt-0.5 text-xs font-semibold text-sky-400 uppercase tracking-wider">
+                    AI & Data Intelligence Leader
+                  </p>
+                  
+                  {/* Social links */}
+                  <div className="mt-4 flex flex-wrap items-center justify-center sm:justify-start gap-1.5">
+                    {SOCIAL.map(({ href, icon: Icon, label, color }) => (
+                      <a
+                        key={href}
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className={`flex items-center gap-1 rounded-lg border border-[color:var(--border)] bg-white/3 px-2.5 py-1 text-[11px] text-slate-400 transition-all duration-300 ${color} hover:bg-white/5 hover:border-slate-500 transform hover:-translate-y-0.5`}
+                      >
+                        <Icon className="h-3 w-3" />
+                        <span>{label === 'giftwarieta.com.ng' ? 'Portfolio' : label}</span>
+                      </a>
+                    ))}
                   </div>
                 </div>
               </div>
 
-              {/* Text Meta Info */}
-              <div className={`flex-1 transition-all duration-700 delay-100 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
-                <h2 className="font-display text-xl font-bold text-white tracking-tight">
-                  Warieta Gift Ejovwoke
-                </h2>
-                <p className="mt-0.5 text-xs font-semibold text-sky-400 uppercase tracking-wider">
-                  AI & Data Intelligence Leader
-                </p>
-                
-                {/* Standardized Social Badges */}
-                <div className="mt-4 flex flex-wrap items-center justify-center sm:justify-start gap-1.5">
-                  {SOCIAL.map(({ href, icon: Icon, label, color }) => (
-                    <a
-                      key={href}
-                      href={href}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      className={`flex items-center gap-1 rounded-lg border border-[color:var(--border)] bg-white/3 px-2.5 py-1 text-[11px] text-slate-400 transition-all duration-200 ${color} hover:bg-white/5 hover:border-slate-500`}
-                    >
-                      <Icon className="h-3 w-3" />
-                      <span>{label === 'giftwarieta.com.ng' ? 'Portfolio' : label}</span>
-                    </a>
-                  ))}
+              {/* Right Side: Bio text */}
+              <div className="lg:col-span-7 flex flex-col justify-center">
+                <div className="space-y-3">
+                  <p className="text-sm leading-relaxed text-slate-300">
+                    I am a thought leader in AI and data intelligence with deep experience building high-performing teams, shaping strategic solutions, and helping businesses unlock growth through smarter technology. My work spans intelligent data-driven products, business optimization, and practical innovation, and I also speak at tech events where I share insights on emerging technologies, leadership, and digital transformation.
+                  </p>
+                  <p className="text-sm leading-relaxed text-slate-300">
+                    This platform anchors complex explainability frameworks (<span className="text-white font-medium">SHAP, LIME</span>) into real-world commercial retention loops, transitioning data science models directly into high-fidelity operational systems.
+                  </p>
                 </div>
               </div>
+
             </div>
+          </Card>
+        </div>
 
-            {/* Right Side: Contextual System Overview (7-Columns wide on desktop) */}
-            <div className={`lg:col-span-7 flex flex-col justify-center transition-all duration-700 delay-150 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Badge color="cyan">Platform Scope</Badge>
-                  <span className="text-[11px] font-mono text-slate-500">Project: ChurnIQ</span>
-                </div>
-                
-                <p className="text-sm leading-relaxed text-slate-300">
-                  Building intelligent systems at the intersection of machine learning, crisp product architecture, and scalable engineering. This project anchors complex explainability frameworks (<span className="text-white font-medium">SHAP, LIME</span>) into real-world commercial retention loops.
-                </p>
-                
-                <p className="text-xs leading-relaxed text-slate-400 hidden sm:block">
-                  Focused on transitioning deep predictive modeling output out of isolated local data science notebooks into proactive, high-fidelity engineering systems optimized for operational infrastructure.
-                </p>
-              </div>
-            </div>
-
-          </div>
-        </Card>
-
-        {/* Core Expertise Grid */}
-        <section className={`transition-all duration-700 delay-200 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
+        {/* Expertise Core Grid with stagger delayed translation cascade */}
+        <div className={`transition-all duration-700 ease-out transform delay-200 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
           <h3 className="mb-4 text-xs font-semibold uppercase tracking-widest text-slate-500">Expertise Core</h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {SKILLS.map(({ icon: Icon, label, color, bg }) => (
-              <div key={label} className={`flex items-center gap-3 rounded-2xl border ${bg} p-4 bg-white/3`}>
+              <div 
+                key={label} 
+                className={`flex items-center gap-3 rounded-2xl border ${bg} p-4 bg-white/3 transition-all duration-300 hover:bg-white/5 hover:scale-[1.02] cursor-default`}
+              >
                 <Icon className={`h-4 w-4 flex-shrink-0 ${color}`} />
                 <span className="text-xs font-medium text-slate-300">{label}</span>
               </div>
             ))}
           </div>
-        </section>
+        </div>
 
-        {/* Selected Projects Showcase */}
-        <section className={`transition-all duration-700 delay-300 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
+        {/* Selected Projects Showcase Grid */}
+        <div className={`transition-all duration-700 ease-out transform delay-300 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
           <h3 className="mb-4 text-xs font-semibold uppercase tracking-widest text-slate-500">Selected Work</h3>
           <div className="grid gap-4 sm:grid-cols-3">
             {PROJECTS.map((proj) => {
@@ -158,43 +157,38 @@ export default function AboutPage() {
                 amber: 'border-amber-500/25 from-amber-500/6',
               }[proj.accent];
 
-              const badgeColor = proj.accent === 'emerald' ? 'emerald' : proj.accent === 'cyan' ? 'cyan' : 'amber';
-
               return (
                 <Card
                   key={proj.name}
-                  className={`flex flex-col justify-between border ${accentClass} bg-gradient-to-br to-transparent p-5`}
+                  className={`flex flex-col justify-between border ${accentClass} bg-gradient-to-br to-transparent p-5 transition-all duration-300 hover:scale-[1.01] hover:border-slate-600`}
                 >
                   <div>
                     <div className="mb-2 flex items-start justify-between gap-2">
                       <h4 className="text-sm font-semibold text-white">{proj.name}</h4>
                       {proj.href && (
-                        <a href={proj.href} target="_blank" rel="noreferrer noopener" className="text-slate-500 hover:text-slate-300 transition-colors">
+                        <a href={proj.href} target="_blank" rel="noreferrer noopener" className="text-slate-500 hover:text-slate-300 transition-colors duration-200">
                           <ExternalLink className="h-3.5 w-3.5" />
                         </a>
                       )}
                     </div>
                     <p className="text-xs leading-relaxed text-slate-400">{proj.description}</p>
                   </div>
-                  <div className="mt-4 flex items-center justify-between">
-                    <Badge color={badgeColor}>{proj.accent}</Badge>
-                  </div>
                 </Card>
               );
             })}
           </div>
-        </section>
+        </div>
 
-        {/* Contact/Collaboration CTA Panel */}
-        <div className={`transition-all duration-700 delay-400 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
-          <Card className="p-5 border-dashed border-[color:var(--border)] bg-white/1">
+        {/* CTA Panel */}
+        <div className={`transition-all duration-700 ease-out transform delay-500 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'}`}>
+          <Card className="p-5 border-dashed border-[color:var(--border)] bg-white/1 transition-all duration-300 hover:border-slate-600">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
               <div>
                 <p className="text-sm font-medium text-white">Interested in collaborating?</p>
                 <p className="text-xs text-slate-500 mt-0.5">Open to consulting, research, and product engineering partnerships.</p>
               </div>
-              <a href="https://giftwarieta.com.ng" target="_blank" rel="noreferrer noopener" className="w-full sm:w-auto">
-                <Button size="sm" className="w-full sm:w-auto">Visit Portfolio</Button>
+              <a href="https://giftwarieta.com.ng" target="_blank" rel="noreferrer noopener" className="w-full sm:w-auto transform active:scale-95 transition-transform duration-100">
+                <Button size="sm" className="w-full sm:w-auto shadow-md">Visit Portfolio</Button>
               </a>
             </div>
           </Card>
