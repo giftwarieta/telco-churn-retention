@@ -27,14 +27,29 @@ const ALGORITHMS = [
 ];
 
 const TEMPLATE_HEADERS = [
-  { name: 'customerID', type: 'String', sample: '7590-VHVEG' },
+  { name: 'customerID', type: 'String', sample: 'CUST-0001' },
+  { name: 'gender', type: 'String', sample: 'Female' },
+  { name: 'SeniorCitizen', type: 'Binary (0/1)', sample: '0' },
+  { name: 'Partner', type: 'String', sample: 'Yes' },
+  { name: 'Dependents', type: 'String', sample: 'No' },
   { name: 'tenure', type: 'Integer', sample: '12' },
+  { name: 'PhoneService', type: 'String', sample: 'Yes' },
+  { name: 'MultipleLines', type: 'String', sample: 'No phone service' },
+  { name: 'InternetService', type: 'String', sample: 'Fiber optic' },
+  { name: 'OnlineSecurity', type: 'String', sample: 'No' },
+  { name: 'OnlineBackup', type: 'String', sample: 'Yes' },
+  { name: 'DeviceProtection', type: 'String', sample: 'No' },
+  { name: 'TechSupport', type: 'String', sample: 'No' },
+  { name: 'StreamingTV', type: 'String', sample: 'Yes' },
+  { name: 'StreamingMovies', type: 'String', sample: 'Yes' },
+  { name: 'Contract', type: 'String', sample: 'Month-to-month' },
+  { name: 'PaperlessBilling', type: 'String', sample: 'Yes' },
+  { name: 'PaymentMethod', type: 'String', sample: 'Electronic check' },
   { name: 'MonthlyCharges', type: 'Float', sample: '70.35' },
   { name: 'TotalCharges', type: 'Float', sample: '844.20' },
-  { name: 'Contract', type: 'String', sample: 'Month-to-month' },
-  { name: 'InternetService', type: 'String', sample: 'Fiber optic' },
-  { name: 'Churn', type: 'Binary (0/1)', sample: '1' },
+  { name: 'Churn', type: 'String', sample: 'Yes' }
 ];
+
 
 export default function TrainPage() {
   const router = useRouter();
@@ -93,22 +108,22 @@ export default function TrainPage() {
     setWorkspaceContext(getWorkspaceContext());
   }, []);
 
-  const handleDownloadTemplate = () => {
+  const handleDownloadTemplate = async () => {
     try {
-      const csvHeaders = TEMPLATE_HEADERS.map(h => h.name).join(',');
-      const csvRow = TEMPLATE_HEADERS.map(h => h.sample).join(',');
-      const csvContent = `data:text/csv;charset=utf-8,${csvHeaders}\n${csvRow}`;
-      
-      const encodedUri = encodeURI(csvContent);
+      const response = await fetch('/api/template');
+      if (!response.ok) throw new Error();
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.setAttribute('href', encodedUri);
-      link.setAttribute('download', 'churniq_custom_template.csv');
+      link.href = url;
+      link.setAttribute('download', 'churniq_data_template.csv');
       document.body.appendChild(link);
       link.click();
-      document.body.removeChild(link);
-      toast.success('Template dataset schema downloaded successfully!');
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success('Template downloaded successfully!');
     } catch {
-      toast.error('Failed to parse downloadable template schema file');
+      toast.error('Could not download the template at this time.');
     }
   };
 
