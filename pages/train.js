@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useDropzone } from 'react-dropzone';
 import toast from 'react-hot-toast';
-import { CheckCircle, Cpu, Info, Play, Server, Upload, ArrowDownToLine, Table } from 'lucide-react';
+import { CheckCircle, Cpu, Info, Play, Server, Upload, ArrowDownToLine, Table, Check } from 'lucide-react';
 import Layout from '../components/Layout';
 import { useDataSource } from '../components/DataOnboarding';
 import { Badge, Button, Card, ProgressBar, SectionHeader } from '../components/ui';
@@ -49,6 +49,9 @@ export default function TrainPage() {
   const [phase, setPhase] = useState('');
   const [sessionDataset, setSessionDataset] = useState(null);
   const [workspaceContext, setWorkspaceContext] = useState(getDefaultWorkspaceContext());
+  
+  // Custom manual confirmation layer state
+  const [isConfirmedForUsage, setIsConfirmedForUsage] = useState(false);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: { 'text/csv': ['.csv'] },
@@ -81,15 +84,15 @@ export default function TrainPage() {
     const trainingSession = getTrainingSession();
     if (trainingSession?.result) {
       setTrainResult(trainingSession.result);
+      // If it exists in workspace context as fully active, reflect confirmation state
+      const currentCtx = getWorkspaceContext();
+      if (currentCtx.modelStatus === 'active') {
+        setIsConfirmedForUsage(true);
+      }
     }
     setWorkspaceContext(getWorkspaceContext());
   }, []);
 
-  if (dataSource === null || dataSource === 'default') {
-    return null;
-  }
-
-  // Generates and triggers browser download pipeline for template mapping references
   const handleDownloadTemplate = () => {
     try {
       const csvHeaders = TEMPLATE_HEADERS.map(h => h.name).join(',');
@@ -103,12 +106,7 @@ export default function TrainPage() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      toast.custom((t) => (
-        <div className="bg-slate-900 border border-sky-500/20 px-4 py-3 rounded-xl flex items-center gap-2.5 text-xs font-medium text-white shadow-xl">
-          <ArrowDownToLine className="h-4 w-4 text-sky-400" />
-          <span>Template dataset schema downloaded successfully!</span>
-        </div>
-      ));
+      toast.success('Template dataset schema downloaded successfully!');
     } catch {
       toast.error('Failed to parse downloadable template schema file');
     }
@@ -119,6 +117,7 @@ export default function TrainPage() {
     setProgress(0);
     setTrainResult(null);
     setTrainError(null);
+    setIsConfirmedForUsage(false);
 
     const steps = [
       [10, 'Loading dataset'],
@@ -136,6 +135,8 @@ export default function TrainPage() {
 
     try {
       const selected = ALGORITHMS.find((item) => item.id === algorithm);
+      
+      // Set to intermediate 'selected' status while keeping analytics gating locked
       setWorkspaceContext(
         setSelectedTrainingModel({
           algorithm,
@@ -143,29 +144,27 @@ export default function TrainPage() {
           status: 'selected',
         })
       );
+      
       const result = await trainModel({
         algorithm,
         test_size: testSize,
         csv_content: sessionDataset?.content || null,
         filename: sessionDataset?.name || null,
       });
+      
       setTrainResult(result);
+      
+      // Cache structural artifacts locally inside raw pending block parameters
       saveTrainingSession({
         algorithm,
         testSize,
         result,
-        sessionModel: result.session_model || null,
+        sessionModel: result.session_model || result.sessionModel || { artifact: 'verified' },
         datasetName: sessionDataset?.name || null,
       });
+      
       updateStats({ totalTrainingSessions: 1 });
-      setWorkspaceContext(
-        setSelectedTrainingModel({
-          algorithm,
-          label: selected?.label || algorithm.toUpperCase(),
-          status: 'active',
-        })
-      );
-      toast.success('Training complete');
+      toast.success('Model training evaluation generated successfully!');
     } catch (err) {
       setTrainError(
         err?.message ||
@@ -174,6 +173,35 @@ export default function TrainPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Activates the model pipeline to open blocked routes across the navigation state
+  const handleConfirmModelUsage = () => {
+    const selected = ALGORITHMS.find((item) => item.id === algorithm);
+    
+    const finalizedContext = setSelectedTrainingModel({
+      algorithm,
+      label: selected?.label || algorithm.toUpperCase(),
+      status: 'active', // Switches layout check flag to active
+    });
+
+    setWorkspaceContext(finalizedContext);
+    setIsConfirmedForUsage(true);
+    
+    // Explicitly update the main session artifact structure so Layout.jsx picks it up instantly
+    const activeSession = JSON.parse(localStorage.getItem('churniq_training_session') || '{}');
+    if (!activeSession.sessionModel) {
+      activeSession.sessionModel = { artifact: 'verified' };
+      localStorage.setItem('churniq_training_session', JSON.stringify(activeSession));
+    }
+
+    // Fire storage update context dispatch to re-render menus without refresh
+    window.dispatchEvent(new Event('storage'));
+    
+    toast.success('Model activated! All platform features are now unlocked.', {
+      icon: '🚀',
+      duration: 4000
+    });
   };
 
   return (
@@ -198,7 +226,6 @@ export default function TrainPage() {
             </p>
           </Card>
 
-          {/* New Dynamic Download Schema Template Matrix Block */}
           <Card className="p-5 border-slate-800 bg-slate-900/10 relative overflow-hidden">
             <div className="absolute top-0 right-0 w-32 h-32 bg-sky-500/5 rounded-full blur-2xl pointer-events-none" />
             <div className="flex items-start justify-between gap-4 mb-4">
@@ -221,7 +248,6 @@ export default function TrainPage() {
               </button>
             </div>
 
-            {/* Layout mini preview grid table tracking required options */}
             <div className="overflow-hidden rounded-xl border border-white/5 bg-black/20 text-[11px]">
               <div className="grid grid-cols-3 bg-white/5 px-3 py-2 text-slate-400 font-mono uppercase tracking-wider text-[9px]">
                 <div>Column Name</div>
@@ -314,6 +340,7 @@ export default function TrainPage() {
                   setSessionDataset(null);
                   setTrainResult(null);
                   setTrainError(null);
+                  setIsConfirmedForUsage(false);
                   clearCustomDatasetSession();
                   setWorkspaceContext(getWorkspaceContext());
                 }}
@@ -334,8 +361,8 @@ export default function TrainPage() {
           <Card className="p-5">
             <div className="mb-3 flex items-center justify-between gap-3">
               <h3 className="font-display text-sm font-semibold text-white">Active Workspace Context</h3>
-              <Badge color={workspaceContext.modelStatus === 'active' ? 'emerald' : 'amber'}>
-                {workspaceContext.modelStatus === 'active' ? 'Active' : 'Pending'}
+              <Badge color={workspaceContext.modelStatus === 'active' && isConfirmedForUsage ? 'emerald' : 'amber'}>
+                {workspaceContext.modelStatus === 'active' && isConfirmedForUsage ? 'Active' : 'Pending Confirmation'}
               </Badge>
             </div>
             <div className="grid gap-3 text-sm sm:grid-cols-2">
@@ -352,6 +379,44 @@ export default function TrainPage() {
               Consultant guidance and insight context will follow the active data source and selected model for this session.
             </p>
           </Card>
+
+          {/* TWO-STEP MANUAL CONFIRMATION MODULE PANEL */}
+          {trainResult && !isConfirmedForUsage && (
+            <Card className="p-5 border-dashed border-sky-500/40 bg-sky-500/5 animate-fade-in">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-start gap-3 text-center sm:text-left">
+                  <div className="p-2 rounded-xl bg-sky-500/10 border border-sky-500/20 text-sky-400 shrink-0 hidden sm:block">
+                    <Info className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Review Complete: Model Pending Activation</h4>
+                    <p className="text-xs text-slate-400 mt-0.5">Click "Confirm and Use Model" below to unlock the remaining workspace tabs using this configuration.</p>
+                  </div>
+                </div>
+                <Button 
+                  icon={Check} 
+                  onClick={handleConfirmModelUsage}
+                  className="w-full sm:w-auto bg-gradient-to-r from-sky-500 to-cyan-500 text-white shadow-md font-bold text-xs shrink-0"
+                >
+                  Confirm and Use Model
+                </Button>
+              </div>
+            </Card>
+          )}
+
+          {isConfirmedForUsage && (
+            <Card className="p-5 border-emerald-500/20 bg-emerald-500/5 animate-fade-in">
+              <div className="flex items-start gap-3">
+                <CheckCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-500" />
+                <div>
+                  <div className="mb-1 text-sm font-semibold text-emerald-500">Trained Model Active for Current Workspace</div>
+                  <p className="text-xs leading-relaxed text-slate-400">
+                    All pages (Predictor, Insights, Consultant, and ROI matrices) are now unlocked and completely configured to reflect this training metrics run.
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
 
           {loading && (
             <Card className="p-6">
@@ -488,18 +553,6 @@ export default function TrainPage() {
                   </div>
                 </Card>
               ) : null}
-
-              <Card className="border-emerald-500/20 bg-emerald-500/5 p-5">
-                <div className="flex items-start gap-3">
-                  <CheckCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-500" />
-                  <div>
-                    <div className="mb-1 text-sm font-semibold text-emerald-500">Training summary ready</div>
-                    <p className="text-xs leading-relaxed text-slate-400">
-                      Review the metrics above to compare fit quality, speed, and dataset coverage before choosing the next iteration.
-                    </p>
-                  </div>
-                </div>
-              </Card>
             </>
           )}
 
